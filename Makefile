@@ -7,13 +7,15 @@ TAB5_ENV := esp32-p4-tab5-rtype
 PIO_ENV ?= $(S3_ENV)
 SERIAL_PORT ?= /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 
-.PHONY: help inspect-rom extract-rom check build build-s3 build-tab5 flash monitor clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas check build build-s3 build-tab5 flash monitor clean
 
 help:
 	@echo "R-Type display-first targets"
 	@echo "  make inspect-rom              - validate attached rtype.zip layout"
 	@echo "  make extract-rom              - extract ignored ROM files under roms/extracted/rtype"
-	@echo "  make check                    - run host-side ROM checks"
+	@echo "  make pack-rom                 - create ignored packed main/gfx ROM artifacts"
+	@echo "  make gfx-atlas                - render ignored static graphics probe PNGs"
+	@echo "  make check                    - run host-side ROM/packer/gfx checks"
 	@echo "  make build / build-s3         - build ESP32-S3 480x800 firmware (primary target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target)"
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
@@ -24,7 +26,14 @@ inspect-rom:
 
 extract-rom: inspect-rom
 
-check: inspect-rom
+pack-rom: extract-rom
+	bun tools/pack_rtype.ts $(ROM_EXTRACTED) artifacts/packed-rtype >/tmp/rtype-pack-report.json
+
+gfx-atlas: extract-rom
+	bun tools/render_gfx_atlas.ts $(ROM_EXTRACTED) artifacts/gfx-atlas 1024
+	convert artifacts/gfx-atlas/cpu-00102030-8x8.png artifacts/gfx-atlas/cpu-01112131-8x8.png artifacts/gfx-atlas/cpu-a0123-8x8.png artifacts/gfx-atlas/cpu-b0123-8x8.png -append artifacts/gfx-atlas/rtype-gfx-probe-combined.png
+
+check: inspect-rom pack-rom gfx-atlas
 
 build build-s3:
 	$(PIO) run -e $(S3_ENV)

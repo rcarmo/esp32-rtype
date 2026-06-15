@@ -11,3 +11,5 @@ artifacts/*.bin
 artifacts/*.png
 artifacts/*.ppm
 .DS_Store
+artifacts/packed-rtype/
+artifacts/gfx-atlas/
