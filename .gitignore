@@ -1,0 +1,13 @@
+.pio/
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+roms/*.zip
+roms/*.bin
+roms/*.rom
+roms/extracted/
+artifacts/*.bin
+artifacts/*.png
+artifacts/*.ppm
+.DS_Store

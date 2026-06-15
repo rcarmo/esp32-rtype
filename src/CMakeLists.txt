@@ -1,0 +1,22 @@
+set(RTYPE_SOURCES
+    "app_main.c"
+    "rtype_rom.c"
+    "rtype_video.c"
+)
+set(RTYPE_REQUIRES driver esp_psram esp_hw_support heap esp_lcd esp_timer)
+
+if("${IDF_TARGET}" STREQUAL "esp32p4")
+    list(APPEND RTYPE_SOURCES "rtype_display_tab5.c")
+    list(APPEND RTYPE_REQUIRES m5stack_tab5 fatfs sdmmc)
+elseif("${IDF_TARGET}" STREQUAL "esp32s3")
+    list(APPEND RTYPE_SOURCES "rtype_display_s3.c")
+    list(APPEND RTYPE_REQUIRES lcd_cyd)
+else()
+    message(FATAL_ERROR "Unsupported IDF_TARGET=${IDF_TARGET}; expected esp32s3 or esp32p4")
+endif()
+
+idf_component_register(
+    SRCS ${RTYPE_SOURCES}
+    INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/include"
+    REQUIRES ${RTYPE_REQUIRES}
+)
