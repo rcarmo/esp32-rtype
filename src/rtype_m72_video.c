@@ -79,7 +79,7 @@ static uint8_t decode_tile_pixel(const uint8_t *region, size_t size, unsigned co
     for (unsigned p = 0; p < 4; p++) {
         unsigned off = plane_offsets[p] + base + y;
         uint8_t b = (off < size) ? region[off] : 0;
-        pix |= (uint8_t)(((b >> (7u - x)) & 1u) << p);
+        pix |= (uint8_t)(((b >> (7u - x)) & 1u) << (3u - p));
     }
     return pix;
 }
@@ -104,7 +104,7 @@ static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, unsigned code
     for (unsigned p = 0; p < 4; p++) {
         unsigned off = plane_offsets[p] + base + byte_in_char;
         uint8_t b = (off < video->sprites_size) ? video->sprites[off] : 0;
-        pix |= (uint8_t)(((b >> bit_in_byte) & 1u) << p);
+        pix |= (uint8_t)(((b >> bit_in_byte) & 1u) << (3u - p));
     }
     return pix;
 }

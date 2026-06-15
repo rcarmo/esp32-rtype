@@ -13,3 +13,6 @@ artifacts/*.ppm
 .DS_Store
 artifacts/packed-rtype/
 artifacts/gfx-atlas/
+artifacts/*.zip
+artifacts/sequence-*/
+artifacts/screenshots/

@@ -226,7 +226,7 @@ struct M72 {
         for (unsigned p = 0; p < 4; p++) {
             unsigned byte_off = plane_offsets[p] + base + y;
             uint8_t b = (byte_off < region.size()) ? region[byte_off] : 0;
-            pix |= ((b >> (7 - x)) & 1u) << p;
+            pix |= ((b >> (7 - x)) & 1u) << (3u - p);
         }
         return pix;
     }
@@ -244,7 +244,7 @@ struct M72 {
         for (unsigned p = 0; p < 4; p++) {
             unsigned byte_off = plane_offsets[p] + base + byte_in_char;
             uint8_t b = (byte_off < sprites.size()) ? sprites[byte_off] : 0;
-            pix |= ((b >> bit_in_byte) & 1u) << p;
+            pix |= ((b >> bit_in_byte) & 1u) << (3u - p);
         }
         return pix;
     }

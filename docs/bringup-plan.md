@@ -86,3 +86,10 @@ Explicitly deferred:
 - Host and firmware renderers now return the palette entry exactly; black palette entries remain black.
 - Post-fix host evidence: 300M default `make host-run` uses real palette only, full visible bbox `0,0-383,253`, active scroll `230/460`, 49 output colors.
 - 300M vs 600M real-palette frames still differ substantially (`AE=69648`), so visible advancement remains proven without fake colors.
+
+## MAME plane-bit ordering fix
+
+- Corrected tile/sprite graphics plane decode to match MAME `gfx_element::decode`: `planeoffset[0]` contributes the high pen bit (`1 << (planes-1)`), then shifts downward.
+- Previous decode used `1 << plane`, reversing M72 pen bits and producing wrong palette indices/colors despite correct palette RAM decode.
+- Host and firmware now decode M72 planes as: RGN_FRAC(3/4)->bit3, 2/4->bit2, 1/4->bit1, 0/4->bit0.
+- Corrected real-palette sequence artifact: `artifacts/rtype-planefix-sequence.png` (not tracked).
