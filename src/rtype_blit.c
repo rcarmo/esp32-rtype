@@ -82,9 +82,42 @@ void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsi
     }
 }
 
+static uint16_t s_cyd_src_x_for_phys_y[RTYPE_BLIT_CYD_PHYS_H];
+static uint16_t s_cyd_src_y_for_phys_x[RTYPE_BLIT_CYD_PHYS_W];
+static uint8_t s_cyd_lut_ready;
+
+static void init_cyd_rotated_luts(void) {
+    if (s_cyd_lut_ready) return;
+
+    // physical y -> logical landscape x -> source x. This is fixed for the
+    // 320-wide logical landscape output and removes a divide from every pixel.
+    for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
+        const unsigned logical_x = (RTYPE_BLIT_CYD_LOGICAL_W - 1u) - py;
+        unsigned src_x = (logical_x * RTYPE_BLIT_SRC_W) / RTYPE_BLIT_CYD_VIEW_W;
+        if (src_x >= RTYPE_BLIT_SRC_W) src_x = RTYPE_BLIT_SRC_W - 1u;
+        s_cyd_src_x_for_phys_y[py] = (uint16_t)src_x;
+    }
+
+    // physical x -> logical landscape y -> source y. 0xffff marks side bars.
+    for (unsigned px = 0; px < RTYPE_BLIT_CYD_PHYS_W; px++) {
+        if (px < RTYPE_BLIT_CYD_ACTIVE_X0 || px >= RTYPE_BLIT_CYD_ACTIVE_X1) {
+            s_cyd_src_y_for_phys_x[px] = 0xffffu;
+        } else {
+            const unsigned view_y = px - RTYPE_BLIT_CYD_VIEW_Y;
+            unsigned src_y = (view_y * RTYPE_BLIT_SRC_H) / RTYPE_BLIT_CYD_VIEW_H;
+            if (src_y >= RTYPE_BLIT_SRC_H) src_y = RTYPE_BLIT_SRC_H - 1u;
+            s_cyd_src_y_for_phys_x[px] = (uint16_t)src_y;
+        }
+    }
+
+    s_cyd_lut_ready = 1;
+}
+
 void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *dst,
                                                  unsigned phys_x, unsigned cols) {
-    if (src == NULL || dst == NULL || cols == 0) return;
+    if (src == NULL || dst == NULL || cols == 0 || phys_x >= RTYPE_BLIT_CYD_PHYS_W) return;
+    if (phys_x + cols > RTYPE_BLIT_CYD_PHYS_W) cols = RTYPE_BLIT_CYD_PHYS_W - phys_x;
+    init_cyd_rotated_luts();
 
     // Rotated fill mode for 240x320 portrait CYD:
     //   logical landscape output: 320x240
@@ -92,21 +125,32 @@ void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *
     //   physical x corresponds to logical y
     //   physical y corresponds to reversed logical x
     // Flush rectangles are physical columns [phys_x, phys_x+cols) x [0,320).
+    // Hot path uses only LUTs, adds, and packed RGB565 stores.
+    uint16_t sy[16];
+    if (cols > (sizeof(sy) / sizeof(sy[0]))) return;
+    uint8_t all_active = 1;
+    for (unsigned c = 0; c < cols; c++) {
+        sy[c] = s_cyd_src_y_for_phys_x[phys_x + c];
+        if (sy[c] == 0xffffu) all_active = 0;
+    }
+
     for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
         uint16_t *out = dst + (size_t)py * cols;
-        const unsigned logical_x = (RTYPE_BLIT_CYD_LOGICAL_W - 1u) - py;
-        const unsigned src_x = (logical_x * RTYPE_BLIT_SRC_W) / RTYPE_BLIT_CYD_VIEW_W; // 384/320 = 6/5
-        for (unsigned c = 0; c < cols; c++) {
-            const unsigned px = phys_x + c;
-            if (px < RTYPE_BLIT_CYD_ACTIVE_X0 || px >= RTYPE_BLIT_CYD_ACTIVE_X1) {
-                out[c] = 0;
-                continue;
+        const unsigned sx = s_cyd_src_x_for_phys_y[py];
+
+        if (!all_active) {
+            for (unsigned c = 0; c < cols; c++) {
+                out[c] = (sy[c] == 0xffffu) ? 0 : src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
             }
-            const unsigned logical_y = px;
-            const unsigned view_y = logical_y - RTYPE_BLIT_CYD_VIEW_Y;
-            unsigned src_y = (view_y * RTYPE_BLIT_SRC_H) / RTYPE_BLIT_CYD_VIEW_H;
-            if (src_y >= RTYPE_BLIT_SRC_H) src_y = RTYPE_BLIT_SRC_H - 1u;
-            out[c] = rtype_blit_rgb565_identity(src[(size_t)src_y * RTYPE_BLIT_SRC_W + src_x]);
+            continue;
         }
+
+        unsigned c = 0;
+        for (; c + 1u < cols; c += 2u) {
+            uint16_t a = src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
+            uint16_t b = src[(size_t)sy[c + 1u] * RTYPE_BLIT_SRC_W + sx];
+            store2_rgb565(out + c, a, b);
+        }
+        if (c < cols) out[c] = src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
     }
 }

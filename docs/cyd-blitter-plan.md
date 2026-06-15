@@ -27,7 +27,9 @@ Implemented in `src/rtype_blit.c`:
 - flushes only active physical columns `x=13..225` over the full 320-pixel height
 - active transfer is about `213*320*2 = 136KB/frame`
 - strip/column-oriented output for SPI flushing
-- packed 32-bit stores remain available in the non-rotated 5/8 path
+- hot path uses precomputed lookup tables: physical Y -> source X, physical X -> source Y
+- no divides in the per-pixel loop
+- packed 32-bit stores write two RGB565 pixels at a time in the active-column path
 - `rtype_blit_cyd_scale_strip_240x160()` remains available as a lower-bandwidth exact 5/8 fallback
 
 The lower-bandwidth fallback repeating source-index pattern is:
@@ -44,8 +46,8 @@ The rotated fill path uses fixed integer source mapping for `384/320` horizontal
 Classic ESP32/CYD does not expose a desktop-style SIMD path for this use case, so the baseline fast path is packed scalar:
 
 - 32-bit RGB565 pair stores
-- fixed-pattern decimation
-- strip buffers in DMA/internal memory
+- fixed-pattern decimation and LUT-backed rotated scaling
+- strip/column buffers in DMA/internal memory
 
 The function boundaries are intentionally SIMD-ready:
 
@@ -75,3 +77,14 @@ Current status: builds successfully for `esp32-cyd-rtype`.
 ## Rotated fill preview
 
 Generated preview artifact: `artifacts/cyd-preview/rtype-cyd-rotated-fill-240x320.png` (not tracked).
+
+## LUT-backed rotated path
+
+The rotated fill path precomputes two small tables at first use:
+
+```text
+phys_y[0..319] -> src_x[0..383]
+phys_x[0..239] -> src_y[0..255] or side-bar marker
+```
+
+The hot loop then performs only indexed loads, pointer arithmetic, and packed RGB565 stores.
