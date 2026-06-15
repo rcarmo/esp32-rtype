@@ -98,7 +98,8 @@ Explicitly deferred:
 
 - Smallest CYD target added as `esp32-cyd-rtype` / `make build-cyd`.
 - Display path targets known physical format: 240x320 ILI9341 SPI RGB565.
-- `src/rtype_blit.c` implements a 384x256 -> 240x160 exact-aspect 5/8 RGB565 strip downsampler with packed 32-bit stores and no hot-loop divides.
+- CYD display now rotates the game into a logical 320x240 landscape view, using a 320x213 aspect-correct viewport mapped onto physical portrait columns.
+- `src/rtype_blit.c` includes the rotated 384x256 -> 320x213 column blitter plus the lower-bandwidth 384x256 -> 240x160 5/8 fallback.
 - Details: [cyd-blitter-plan.md](cyd-blitter-plan.md)
 
 ## Async CYD display worker

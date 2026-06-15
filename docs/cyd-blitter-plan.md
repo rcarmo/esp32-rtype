@@ -22,26 +22,22 @@ This is much lower than pushing the original `384x256` frame or a rotated 320-wi
 
 Implemented in `src/rtype_blit.c`:
 
-- `rtype_blit_cyd_scale_strip_240x160()`
-- exact 5/8 nearest-neighbor downscale: `384x256 -> 240x160`
-- strip-oriented output for SPI flushing
-- no divides in the hot pixel loop
-- unrolled 8-source-pixel to 5-destination-pixel mapping
-- packed 32-bit stores for two RGB565 pixels at a time
+- `rtype_blit_cyd_rotate_scale_columns_320x213()` for rotated fill mode
+- maps `384x256 -> 320x213`, centered in logical `320x240`, then rotated onto physical `240x320`
+- flushes only active physical columns `x=13..225` over the full 320-pixel height
+- active transfer is about `213*320*2 = 136KB/frame`
+- strip/column-oriented output for SPI flushing
+- packed 32-bit stores remain available in the non-rotated 5/8 path
+- `rtype_blit_cyd_scale_strip_240x160()` remains available as a lower-bandwidth exact 5/8 fallback
 
-The repeating source-index pattern is:
+The lower-bandwidth fallback repeating source-index pattern is:
 
 ```text
 8 source pixels -> 5 destination pixels
 src indices: 0, 1, 3, 4, 6
 ```
 
-The vertical row pattern is the same:
-
-```text
-8 source rows -> 5 destination rows
-src rows: 0, 1, 3, 4, 6
-```
+The rotated fill path uses fixed integer source mapping for `384/320` horizontally and `256/213` vertically, isolated behind the blitter API for later LUT/SIMD replacement.
 
 ## SIMD preparation
 
@@ -75,3 +71,7 @@ Current status: builds successfully for `esp32-cyd-rtype`.
 - The app attempts to allocate a second 384x256 RGB565 source framebuffer so the producer can render the next frame while core 0 scales/flushes the previous frame.
 - If the second framebuffer is unavailable, the producer throttles after present to reduce the chance of overwriting the only source buffer while the display task reads it.
 - This is the intended CYD split: emulator/game producer on the app core, SPI/downsample/display on core 0.
+
+## Rotated fill preview
+
+Generated preview artifact: `artifacts/cyd-preview/rtype-cyd-rotated-fill-240x320.png` (not tracked).

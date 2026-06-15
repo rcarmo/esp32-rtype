@@ -81,3 +81,32 @@ void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsi
         }
     }
 }
+
+void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *dst,
+                                                 unsigned phys_x, unsigned cols) {
+    if (src == NULL || dst == NULL || cols == 0) return;
+
+    // Rotated fill mode for 240x320 portrait CYD:
+    //   logical landscape output: 320x240
+    //   aspect-correct viewport: 320x213, centered at logical y=13
+    //   physical x corresponds to logical y
+    //   physical y corresponds to reversed logical x
+    // Flush rectangles are physical columns [phys_x, phys_x+cols) x [0,320).
+    for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
+        uint16_t *out = dst + (size_t)py * cols;
+        const unsigned logical_x = (RTYPE_BLIT_CYD_LOGICAL_W - 1u) - py;
+        const unsigned src_x = (logical_x * RTYPE_BLIT_SRC_W) / RTYPE_BLIT_CYD_VIEW_W; // 384/320 = 6/5
+        for (unsigned c = 0; c < cols; c++) {
+            const unsigned px = phys_x + c;
+            if (px < RTYPE_BLIT_CYD_ACTIVE_X0 || px >= RTYPE_BLIT_CYD_ACTIVE_X1) {
+                out[c] = 0;
+                continue;
+            }
+            const unsigned logical_y = px;
+            const unsigned view_y = logical_y - RTYPE_BLIT_CYD_VIEW_Y;
+            unsigned src_y = (view_y * RTYPE_BLIT_SRC_H) / RTYPE_BLIT_CYD_VIEW_H;
+            if (src_y >= RTYPE_BLIT_SRC_H) src_y = RTYPE_BLIT_SRC_H - 1u;
+            out[c] = rtype_blit_rgb565_identity(src[(size_t)src_y * RTYPE_BLIT_SRC_W + src_x]);
+        }
+    }
+}

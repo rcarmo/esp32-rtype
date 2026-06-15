@@ -21,19 +21,40 @@ typedef struct {
 
 static bool s_ready;
 static uint16_t *s_strip;
-static unsigned s_strip_rows;
+static unsigned s_strip_cols;
 static QueueHandle_t s_display_queue;
 static TaskHandle_t s_display_task;
 static uint32_t s_present_sequence;
 static volatile uint32_t s_displayed_sequence;
 static volatile uint32_t s_dropped_jobs;
 
+static void clear_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (w == 0 || h == 0 || s_strip == NULL) return;
+    unsigned max_cols = s_strip_cols;
+    while (w > 0) {
+        unsigned cols = (w > max_cols) ? max_cols : w;
+        for (unsigned row = 0; row < h; row++) {
+            for (unsigned col = 0; col < cols; col++) s_strip[(size_t)row * cols + col] = 0;
+        }
+        lcd_draw_bitmap(x, y, cols, h, (const uint8_t *)s_strip);
+        x += cols;
+        w -= cols;
+    }
+}
+
+static void rtype_display_clear_bars(void) {
+    clear_rect(0, 0, RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_PHYS_H);
+    clear_rect(RTYPE_BLIT_CYD_ACTIVE_X1, 0,
+               RTYPE_BLIT_CYD_PHYS_W - RTYPE_BLIT_CYD_ACTIVE_X1, RTYPE_BLIT_CYD_PHYS_H);
+    lcd_wait_trans_complete();
+}
+
 static void rtype_display_flush_blocking(const uint16_t *framebuffer) {
-    for (unsigned y = 0; y < RTYPE_BLIT_CYD_PHYS_H; y += s_strip_rows) {
-        unsigned rows = s_strip_rows;
-        if (y + rows > RTYPE_BLIT_CYD_PHYS_H) rows = RTYPE_BLIT_CYD_PHYS_H - y;
-        rtype_blit_cyd_scale_strip_240x160(framebuffer, s_strip, y, rows);
-        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_PHYS_W, (uint16_t)rows, (const uint8_t *)s_strip);
+    for (unsigned x = RTYPE_BLIT_CYD_ACTIVE_X0; x < RTYPE_BLIT_CYD_ACTIVE_X1; x += s_strip_cols) {
+        unsigned cols = s_strip_cols;
+        if (x + cols > RTYPE_BLIT_CYD_ACTIVE_X1) cols = RTYPE_BLIT_CYD_ACTIVE_X1 - x;
+        rtype_blit_cyd_rotate_scale_columns_320x213(framebuffer, s_strip, x, cols);
+        lcd_draw_bitmap((uint16_t)x, 0, (uint16_t)cols, RTYPE_BLIT_CYD_PHYS_H, (const uint8_t *)s_strip);
     }
     lcd_wait_trans_complete();
 }
@@ -44,8 +65,6 @@ static void rtype_display_task(void *arg) {
     rtype_display_job_t job;
     while (true) {
         if (xQueueReceive(s_display_queue, &job, portMAX_DELAY) == pdTRUE) {
-            // Drain to newest frame. Display bandwidth is the limiting resource;
-            // dropping stale frames is better than stalling the emulator core.
             rtype_display_job_t newer;
             while (xQueueReceive(s_display_queue, &newer, 0) == pdTRUE) {
                 job = newer;
@@ -60,21 +79,24 @@ static void rtype_display_task(void *arg) {
 esp_err_t rtype_display_init(void) {
     if (s_ready) return ESP_OK;
     ESP_LOGI(TAG,
-             "initializing CYD ILI9341 SPI display: panel=%ux%u source=%ux%u physical_view=%ux%u+y%u RGB565 downscale=5/8 async_core=0",
+             "initializing CYD ILI9341 SPI display: panel=%ux%u source=%ux%u rotated_view=%ux%u active_phys_x=%u..%u RGB565 async_core=0",
              RTYPE_LCD_W, RTYPE_LCD_H, RTYPE_GAME_W, RTYPE_GAME_H,
-             RTYPE_BLIT_CYD_VIEW_W, RTYPE_BLIT_CYD_VIEW_H, RTYPE_BLIT_CYD_VIEW_Y);
+             RTYPE_BLIT_CYD_VIEW_W, RTYPE_BLIT_CYD_VIEW_H,
+             RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_ACTIVE_X1 - 1u);
     lcd_cyd_init();
-    s_strip_rows = 8;
-    s_strip = (uint16_t *)heap_caps_malloc((size_t)RTYPE_BLIT_CYD_PHYS_W * s_strip_rows * sizeof(uint16_t),
+    s_strip_cols = 8;
+    s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
                                            MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (s_strip == NULL) {
-        s_strip = (uint16_t *)heap_caps_malloc((size_t)RTYPE_BLIT_CYD_PHYS_W * s_strip_rows * sizeof(uint16_t),
+        s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
                                                MALLOC_CAP_8BIT);
     }
     if (s_strip == NULL) {
-        ESP_LOGE(TAG, "failed to allocate CYD RGB565 strip buffer");
+        ESP_LOGE(TAG, "failed to allocate CYD RGB565 column strip buffer");
         return ESP_ERR_NO_MEM;
     }
+
+    rtype_display_clear_bars();
 
     s_display_queue = xQueueCreate(2, sizeof(rtype_display_job_t));
     if (s_display_queue == NULL) {
@@ -103,16 +125,14 @@ esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned wid
     esp_err_t err = rtype_display_init();
     if (err != ESP_OK) return err;
 
-    // Small CYD path: 384x256 RGB565 -> 240x160 RGB565, centered vertically
-    // on the 240x320 portrait ILI9341. The async worker pinned to core 0 scales
-    // and flushes strips while the producer can continue on the other core.
+    // Rotated CYD fill path: logical 320x240 landscape, aspect-correct 320x213
+    // game viewport, flushed as physical portrait columns to the ILI9341.
     if (s_display_task != NULL && s_display_queue != NULL) {
         rtype_display_job_t job = {
             .framebuffer = framebuffer,
             .sequence = ++s_present_sequence,
         };
         if (xQueueSend(s_display_queue, &job, 0) != pdTRUE) {
-            // Queue full: drop the older queued frame and keep the newest.
             rtype_display_job_t dropped;
             (void)xQueueReceive(s_display_queue, &dropped, 0);
             s_dropped_jobs++;

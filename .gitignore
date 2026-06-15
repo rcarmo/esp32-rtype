@@ -23,3 +23,4 @@ artifacts/screenshots/
 sdkconfig.*-rtype
 sdkconfig.esp32-*
 dependencies.lock
+artifacts/cyd-preview/
