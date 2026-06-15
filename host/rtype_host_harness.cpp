@@ -252,17 +252,8 @@ struct M72 {
     uint16_t visible_color(unsigned palette_index, uint8_t pen) const {
         uint16_t c = palette[palette_index & 0x1ffu];
         if (pen != 0) {
-            if (c == 0) render_fallback_pixels++;
+            if (c == 0) render_fallback_pixels++; // actually black palette hits; retained as a diagnostic counter
             else render_palette_pixels++;
-        }
-        if (c == 0 && pen != 0) {
-            // Visibility fallback for early host bring-up: if emulated palette RAM
-            // has not yet populated this nonzero pen, use a deterministic debug
-            // RGB565 color. The palette RAM itself remains unchanged.
-            uint8_t r = uint8_t(((palette_index * 37u) + pen * 41u) & 0xffu);
-            uint8_t g = uint8_t(((palette_index * 17u) + pen * 73u) & 0xffu);
-            uint8_t b = uint8_t(((palette_index * 59u) + pen * 29u) & 0xffu);
-            c = rgb565(r, g, b);
         }
         return c;
     }
@@ -848,7 +839,7 @@ int main(int argc, char **argv) {
     const uint32_t pal1_nz = m.palette_nonzero(256, 512);
     const uint32_t palram0_nz = m.palette_ram_nonzero(0xc8000);
     const uint32_t palram1_nz = m.palette_ram_nonzero(0xcc000);
-    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu region_writes=spr:%llu,pal0:%llu,pal1:%llu,vram0:%llu,vram1:%llu vram0_nz=%u vram1_nz=%u spr_nz=%u render_tile_px=%llu render_sprite_px=%llu render_palette_px=%llu render_fallback_px=%llu visible_nonblack=%llu visible_tile_px=%llu visible_sprite_px=%llu visible_bbox=%d,%d-%d,%d raw_bbox=%d,%d-%d,%d pal0_nz=%u pal1_nz=%u palram0_nz=%u palram1_nz=%u pal_samples=%04x,%04x,%04x,%04x,%04x,%04x vec20=%04x:%04x vec22=%04x:%04x raster=%u main_state=%04x root_state=%04x diag_state=%04x frame_counter=%04x input_shadow=%04x,%04x,%04x queue=%04x/%04x q0=%04x,%04x,%04x obj=%04x,%04x,%04x,%04x,%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x watch0000=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
+    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu region_writes=spr:%llu,pal0:%llu,pal1:%llu,vram0:%llu,vram1:%llu vram0_nz=%u vram1_nz=%u spr_nz=%u render_tile_px=%llu render_sprite_px=%llu render_palette_px=%llu render_blackpal_px=%llu visible_nonblack=%llu visible_tile_px=%llu visible_sprite_px=%llu visible_bbox=%d,%d-%d,%d raw_bbox=%d,%d-%d,%d pal0_nz=%u pal1_nz=%u palram0_nz=%u palram1_nz=%u pal_samples=%04x,%04x,%04x,%04x,%04x,%04x vec20=%04x:%04x vec22=%04x:%04x raster=%u main_state=%04x root_state=%04x diag_state=%04x frame_counter=%04x input_shadow=%04x,%04x,%04x queue=%04x/%04x q0=%04x,%04x,%04x obj=%04x,%04x,%04x,%04x,%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x watch0000=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
                 cpu.pc(), cpu.s[CS], cpu.ip, cpu.r[SP], cpu.s[SS], cpu.min_sp, cpu.min_sp_pc, cpu.suspicious_sp, cpu.suspicious_sp_pc,
                 (unsigned long long)cpu.insn, cpu.halted ? 1 : 0,
                 cpu.interrupt_depth, (unsigned long long)cpu.interrupt_count, (unsigned long long)cpu.iret_count,

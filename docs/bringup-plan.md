@@ -79,3 +79,10 @@ Explicitly deferred:
   - 600M instructions: no halt, `irq_count=4999`, `visible_nonblack=147418`, `visible_sprite_px=38450`, 87 output colors, active scroll `175/343`.
   - 300M vs 600M frame delta: `AE=92993`, proving visible frame advancement.
 - This satisfies the host done condition: the harness loads the supplied R-Type ROM set and runs the game far enough to render advancing full-screen game graphics.
+
+## Real-palette color correction
+
+- Removed the bring-up/debug color fallback that replaced nonzero pens hitting black palette entries with synthetic RGB colors.
+- Host and firmware renderers now return the palette entry exactly; black palette entries remain black.
+- Post-fix host evidence: 300M default `make host-run` uses real palette only, full visible bbox `0,0-383,253`, active scroll `230/460`, 49 output colors.
+- 300M vs 600M real-palette frames still differ substantially (`AE=69648`), so visible advancement remains proven without fake colors.

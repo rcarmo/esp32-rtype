@@ -29,12 +29,8 @@ uint8_t *rtype_m72_alloc_region(size_t bytes, const char *name) {
 }
 
 static uint16_t visible_color(uint16_t palette_entry, unsigned palette_index, uint8_t pen) {
-    if (palette_entry == 0 && pen != 0) {
-        uint8_t r = (uint8_t)(((palette_index * 37u) + pen * 41u) & 0xffu);
-        uint8_t g = (uint8_t)(((palette_index * 17u) + pen * 73u) & 0xffu);
-        uint8_t b = (uint8_t)(((palette_index * 59u) + pen * 29u) & 0xffu);
-        return rtype_rgb565(r, g, b);
-    }
+    (void)palette_index;
+    (void)pen;
     return palette_entry;
 }
 
