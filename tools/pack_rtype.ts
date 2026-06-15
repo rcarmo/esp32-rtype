@@ -36,6 +36,16 @@ const mainHigh = interleave("rt_r-l1-.bin", "rt_r-h1-.bin");
 const mainCpu = Buffer.concat([mainLow, mainHigh]);
 writeFileSync(join(outDir, "maincpu-v30.bin"), mainCpu);
 
+// MAME-faithful 20-bit V30 address map for R-Type/M72:
+//   0x00000..0x1ffff = L0/H0
+//   0x20000..0x3ffff = L1/H1
+//   0xe0000..0xfffff = L1/H1 mirror for reset vector fetch
+const mainMap = Buffer.alloc(0x100000, 0xff);
+mainLow.copy(mainMap, 0x00000);
+mainHigh.copy(mainMap, 0x20000);
+mainHigh.copy(mainMap, 0xe0000);
+writeFileSync(join(outDir, "maincpu-map.bin"), mainMap);
+
 const gfxGroups = [
   ["cpu-00.bin", "cpu-10.bin", "cpu-20.bin", "cpu-30.bin"],
   ["cpu-01.bin", "cpu-11.bin", "cpu-21.bin", "cpu-31.bin"],
@@ -55,7 +65,13 @@ const report = {
     size: mainCpu.length,
     sha1: sha1(mainCpu),
     resetTail: resetTail.toString("hex"),
-    resetJump: resetJumpOffset >= 0 ? { offsetInHighPair: resetJumpOffset, bytes: "ea0008003f", asm: "jmp 3f00:0800" } : null,
+    resetJump: resetJumpOffset >= 0 ? { offsetInHighPair: resetJumpOffset, linearAddress: 0xe0000 + resetJumpOffset, bytes: "ea0008003f", asm: "jmp 3f00:0800" } : null,
+  },
+  maincpuMap: {
+    file: "maincpu-map.bin",
+    size: mainMap.length,
+    sha1: sha1(mainMap),
+    resetVectorBytes: mainMap.subarray(0xffff0, 0xffff5).toString("hex"),
   },
   gfxRawPlanes: {
     file: "gfx-raw-planes.bin",
