@@ -105,7 +105,7 @@ uint16_t rtype_m72_core_in16(rtype_m72_core_t *core, uint16_t port) {
     switch (port & 0xffu) {
     case 0x00: return 0xffffu;
     case 0x02: return 0xffffu;
-    case 0x04: return 0xffffu;
+    case 0x04: return 0xfdfbu; // R-Type MAME default DSW
     case 0x40: return 0x0000u;
     case 0x42: return 0x0000u;
     default: return 0xffffu;

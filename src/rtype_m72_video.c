@@ -114,6 +114,9 @@ static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, unsigned code
 }
 
 static void put_pixel(uint16_t *fb, int x, int y, uint16_t c) {
+    // M72 raw screen is 512 pixels wide with visible X range 64..447.
+    // Convert raw hardware X into the 384-wide output framebuffer.
+    x -= 64;
     if (x >= 0 && x < (int)RTYPE_GAME_W && y >= 0 && y < (int)RTYPE_GAME_H) {
         fb[(size_t)y * RTYPE_GAME_W + x] = c;
     }

@@ -63,3 +63,10 @@ Explicitly deferred:
 - Added `src/rtype_i86_cpu.c`, an incremental firmware-side 8086/V30-family CPU backend interface over `rtype_m72_core_t` memory/port callbacks.
 - Current firmware CPU module includes reset/vector/run plumbing and the migrated host-harness opcode coverage used by the R-Type reset/frame path. The host harness remains the runtime oracle until the S3 app is wired to run CPU frames from external ROMs.
 - Next extraction step is to wire S3 frame execution behind a build/runtime flag and feed the CPU backend from external main-program ROMs.
+
+## Palette/visible-frame audit
+
+- Palette RAM is populated in host runs (`palram0_nz≈1517`, `palram1_nz≈1432`; palette entries nonzero in both banks).
+- The renderer mostly resolves nonzero pens through real palette entries (`render_palette_px≈35938`) with a smaller fallback contribution (`render_fallback_px≈3606`).
+- M72 visible X is `64..447` on a 512-wide raw screen; host and firmware renderers now subtract the visible-area X offset when writing the 384-wide framebuffer.
+- Current frame is still not done-condition quality: only about 640 nonblack visible pixels in a small `48x24` bbox, and 20M/100M/300M host frames are identical. Remaining gap is sparse/stuck live video state, not absent palette RAM.

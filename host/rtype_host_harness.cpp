@@ -72,6 +72,15 @@ struct M72 {
     bool video_off = false;
     uint64_t mem_writes = 0;
     uint64_t port_writes = 0;
+    mutable uint64_t render_palette_pixels = 0;
+    mutable uint64_t render_fallback_pixels = 0;
+    mutable uint64_t render_tile_pixels = 0;
+    mutable uint64_t render_sprite_pixels = 0;
+    mutable uint64_t render_visible_nonblack = 0;
+    mutable int render_min_x = 9999;
+    mutable int render_min_y = 9999;
+    mutable int render_max_x = -1;
+    mutable int render_max_y = -1;
 
     uint32_t count_nonzero(uint32_t begin, uint32_t end) const {
         uint32_t n = 0;
@@ -158,7 +167,7 @@ struct M72 {
         switch (port & 0xff) {
         case 0x00: return 0xffff; // IN0 all idle
         case 0x02: return 0xffff; // IN1 all idle
-        case 0x04: return 0xffff; // DSW default/off-ish
+        case 0x04: return 0xfdfb; // R-Type MAME default DSW
         case 0x40: return 0x0000; // PIC low byte placeholder
         case 0x42: return 0x0000;
         default: return 0xffff;
@@ -226,6 +235,10 @@ struct M72 {
 
     uint16_t visible_color(unsigned palette_index, uint8_t pen) const {
         uint16_t c = palette[palette_index & 0x1ffu];
+        if (pen != 0) {
+            if (c == 0) render_fallback_pixels++;
+            else render_palette_pixels++;
+        }
         if (c == 0 && pen != 0) {
             // Visibility fallback for early host bring-up: if emulated palette RAM
             // has not yet populated this nonzero pen, use a deterministic debug
@@ -239,7 +252,19 @@ struct M72 {
     }
 
     void put_pixel(int x, int y, uint16_t color) {
-        if (x >= 0 && x < FB_W && y >= 0 && y < FB_H) framebuffer[size_t(y) * FB_W + x] = color;
+        // M72 raw screen is 512 pixels wide, with visible X range 64..447.
+        // Convert raw hardware X into our 384-wide framebuffer coordinate.
+        x -= 64;
+        if (x >= 0 && x < FB_W && y >= 0 && y < FB_H) {
+            framebuffer[size_t(y) * FB_W + x] = color;
+            if (color != 0) {
+                render_visible_nonblack++;
+                if (x < render_min_x) render_min_x = x;
+                if (y < render_min_y) render_min_y = y;
+                if (x > render_max_x) render_max_x = x;
+                if (y > render_max_y) render_max_y = y;
+            }
+        }
     }
 
     void draw_tile_layer(const std::vector<uint8_t> &region, uint32_t vram_base, unsigned palette_base,
@@ -263,6 +288,7 @@ struct M72 {
                         uint8_t pen = decode_tile_pixel(region, code, rx, ry);
                         if (transparent && pen == 0) continue;
                         uint16_t rgb = visible_color(palette_base + color * 16u + pen, pen);
+                        if (pen != 0) render_tile_pixels++;
                         put_pixel(base_x + int(px), base_y + int(py), rgb);
                     }
                 }
@@ -297,6 +323,7 @@ struct M72 {
                             unsigned ry = flipy ? (15 - py) : py;
                             uint8_t pen = decode_sprite_pixel(c, rx, ry);
                             if (pen == 0) continue;
+                            render_sprite_pixels++;
                             put_pixel(sx + int(x * 16u + px), sy + int(y * 16u + py), visible_color(color * 16u + pen, pen));
                         }
                     }
@@ -318,6 +345,15 @@ struct M72 {
     }
 
     void render_frame(bool seed_if_blank) {
+        render_palette_pixels = 0;
+        render_fallback_pixels = 0;
+        render_tile_pixels = 0;
+        render_sprite_pixels = 0;
+        render_visible_nonblack = 0;
+        render_min_x = 9999;
+        render_min_y = 9999;
+        render_max_x = -1;
+        render_max_y = -1;
         bool any_vram = false;
         for (uint32_t a = 0xd0000; a < 0xdc000; a++) any_vram |= mem[a] != 0;
         if (seed_if_blank && !any_vram) seed_static_probe_vram();
@@ -326,6 +362,19 @@ struct M72 {
         draw_tile_layer(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], false); // BG from Bx
         draw_tile_layer(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], true);  // FG from Ax
         draw_sprites();
+    }
+
+    uint32_t palette_nonzero(unsigned begin, unsigned end) const {
+        uint32_t n = 0;
+        if (end > palette.size()) end = (unsigned)palette.size();
+        for (unsigned i = begin; i < end; i++) if (palette[i] != 0) n++;
+        return n;
+    }
+
+    uint32_t palette_ram_nonzero(uint32_t base) const {
+        uint32_t n = 0;
+        for (uint32_t a = base; a <= base + 0xbffu; a++) if (mem[a & 0xfffff] != 0) n++;
+        return n;
     }
 
     void write_ppm(const std::string &path) const {
@@ -722,14 +771,24 @@ int main(int argc, char **argv) {
     const uint16_t state_timer = m.read16(0x40000u + 0x30d9u);
     const uint8_t low_3c = m.read8(0x40000u + 0x003cu);
     const uint8_t low_3e = m.read8(0x40000u + 0x003eu);
-    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu vram0_nz=%u vram1_nz=%u spr_nz=%u vec20=%04x:%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
+    const uint32_t pal0_nz = m.palette_nonzero(0, 256);
+    const uint32_t pal1_nz = m.palette_nonzero(256, 512);
+    const uint32_t palram0_nz = m.palette_ram_nonzero(0xc8000);
+    const uint32_t palram1_nz = m.palette_ram_nonzero(0xcc000);
+    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu vram0_nz=%u vram1_nz=%u spr_nz=%u render_tile_px=%llu render_sprite_px=%llu render_palette_px=%llu render_fallback_px=%llu visible_nonblack=%llu visible_bbox=%d,%d-%d,%d pal0_nz=%u pal1_nz=%u palram0_nz=%u palram1_nz=%u pal_samples=%04x,%04x,%04x,%04x,%04x,%04x vec20=%04x:%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
                 cpu.pc(), cpu.s[CS], cpu.ip, cpu.r[SP], cpu.s[SS], cpu.min_sp, cpu.min_sp_pc, cpu.suspicious_sp, cpu.suspicious_sp_pc,
                 (unsigned long long)cpu.insn, cpu.halted ? 1 : 0,
                 cpu.interrupt_depth, (unsigned long long)cpu.interrupt_count, (unsigned long long)cpu.iret_count,
                 cpu.stop_reason, cpu.last_opcode,
                 (unsigned long long)m.mem_writes, (unsigned long long)m.port_writes,
                 m.count_nonzero(0xd0000, 0xd4000), m.count_nonzero(0xd8000, 0xdc000),
-                m.count_nonzero(0xc0000, 0xc0400), vec20_seg, vec20_off,
+                m.count_nonzero(0xc0000, 0xc0400),
+                (unsigned long long)m.render_tile_pixels, (unsigned long long)m.render_sprite_pixels,
+                (unsigned long long)m.render_palette_pixels, (unsigned long long)m.render_fallback_pixels,
+                (unsigned long long)m.render_visible_nonblack, m.render_min_x, m.render_min_y, m.render_max_x, m.render_max_y,
+                pal0_nz, pal1_nz, palram0_nz, palram1_nz,
+                m.palette[0], m.palette[1], m.palette[15], m.palette[256], m.palette[257], m.palette[271],
+                vec20_seg, vec20_off,
                 state_ptr, state_sel, state_timer, low_3c, low_3e,
                 cpu.watch_desc[0] ? cpu.watch_desc[0] : '-', cpu.watch_pc[0], cpu.watch_value[0],
                 cpu.watch_desc[1] ? cpu.watch_desc[1] : '-', cpu.watch_pc[1], cpu.watch_value[1],
