@@ -1,5 +1,6 @@
 #include "rtype_board.h"
 #include "rtype_display.h"
+#include "rtype_m72_core.h"
 #include "rtype_m72_video.h"
 #include "rtype_rom.h"
 #include "rtype_video.h"
@@ -51,25 +52,22 @@ void app_main(void) {
         rtype_display_heartbeat_loop();
     }
 
-    rtype_m72_video_t m72;
-    rtype_m72_video_init(&m72);
-    m72.vram0 = rtype_m72_alloc_region(RTYPE_M72_VRAM_BYTES, "m72-vram0");
-    m72.vram1 = rtype_m72_alloc_region(RTYPE_M72_VRAM_BYTES, "m72-vram1");
-    m72.spriteram = rtype_m72_alloc_region(RTYPE_M72_SPRITERAM_BYTES, "m72-spriteram");
-    if (m72.vram0 == NULL || m72.vram1 == NULL || m72.spriteram == NULL) {
-        ESP_LOGE(TAG, "no M72 video RAM; falling back to animated framebuffer pattern");
+    rtype_m72_core_t core;
+    esp_err_t core_err = rtype_m72_core_init(&core);
+    if (core_err != ESP_OK) {
+        ESP_LOGE(TAG, "no M72 core state (%s); falling back to animated framebuffer pattern", esp_err_to_name(core_err));
     } else {
-        ESP_LOGI(TAG, "Milestone S3 graphics: M72 tile/sprite renderer active");
-        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &m72);
+        ESP_LOGI(TAG, "Milestone S3 graphics: M72 core + tile/sprite renderer active");
+        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
         if (rom_err != ESP_OK) {
             ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
         }
     }
 
     for (unsigned frame = 0;; frame++) {
-        if (m72.vram0 != NULL && m72.vram1 != NULL && m72.spriteram != NULL) {
-            rtype_m72_video_seed_probe_scene(&m72, frame);
-            rtype_m72_video_render(&m72, fb);
+        if (core_err == ESP_OK) {
+            rtype_m72_video_seed_probe_scene(&core.video, frame);
+            rtype_m72_core_render_frame(&core, fb);
         } else {
             rtype_video_render_boot_pattern(fb, frame);
         }

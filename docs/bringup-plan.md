@@ -52,3 +52,8 @@ Explicitly deferred:
 - Firmware exposes `rtype_rom_load_m72_graphics("/spiflash/rtype", &m72)` to load unpacked user-supplied ROM files into PSRAM-backed M72 `sprites`, `tiles0`, and `tiles1` regions.
 - The loader mirrors the MAME R-Type sprite-region layout, including first-32KB copies from the 64KB `cpu-01/11/21/31` files.
 - ROM files remain external and ignored; if the path is unavailable the S3 renderer continues with deterministic fallback pixels.
+
+## Shared M72 core state
+
+- Firmware now has `src/rtype_m72_core.c`, an ESP-friendly M72 core state layer with a 1MB CPU address map, work/video/sprite/palette memory mapping, idle input ports, scroll/video-off ports, and frame rendering through `rtype_m72_video`.
+- The S3 app initializes this core and renders from its mapped VRAM/sprite RAM, aligning firmware structure with the host harness and preparing for a shared CPU backend.
