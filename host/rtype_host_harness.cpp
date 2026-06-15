@@ -774,7 +774,6 @@ int main(int argc, char **argv) {
     uint64_t instruction_limit = 2000000;
     bool seed = true;
     bool stop_after_first_irq_loop = false;
-    bool force_game_state = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--packed" && i + 1 < argc) packed = argv[++i];
@@ -783,7 +782,6 @@ int main(int argc, char **argv) {
         else if (a == "--out" && i + 1 < argc) out = argv[++i];
         else if (a == "--no-seed") seed = false;
         else if (a == "--stop-after-first-irq-loop") stop_after_first_irq_loop = true;
-        else if (a == "--force-game-state") force_game_state = true;
         else { usage(argv[0]); return 2; }
     }
 
@@ -806,9 +804,6 @@ int main(int argc, char **argv) {
                 cpu.pending_frame_sp_valid = false;
             }
             if (stop_after_first_irq_loop && cpu.interrupt_count > 0) break;
-        }
-        if (force_game_state && m.read16(0x42eb4) > 0x40 && m.read16(0x40000) == 0x06a0) {
-            m.write16(0x40000, 0x1115);
         }
         const bool vector_ready = (m.read16(0x20u * 4u) == 0x00fe && m.read16(0x20u * 4u + 2u) == 0x0040);
         const bool in_main_loop = (cpu.s[CS] == 0x0040 && cpu.ip >= 0x00d0 && cpu.ip <= 0x00f8);

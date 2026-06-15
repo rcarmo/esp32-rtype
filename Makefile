@@ -11,7 +11,7 @@ HOST_BUILD_DIR ?= build/host
 HOST_RTYPE_HARNESS ?= $(HOST_BUILD_DIR)/rtype_host_harness
 HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
-HOST_RTYPE_INSTRUCTIONS ?= 20000000
+HOST_RTYPE_INSTRUCTIONS ?= 300000000
 
 .PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-tab5 flash monitor clean
 
