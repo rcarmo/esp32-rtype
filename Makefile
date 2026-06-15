@@ -4,6 +4,7 @@ ROM_ZIP ?= roms/rtype.zip
 ROM_EXTRACTED ?= roms/extracted/rtype
 S3_ENV := esp32-s3-8048s043c-rtype
 TAB5_ENV := esp32-p4-tab5-rtype
+CYD_ENV := esp32-cyd-rtype
 PIO_ENV ?= $(S3_ENV)
 SERIAL_PORT ?= /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 HOST_CXX ?= c++
@@ -13,7 +14,7 @@ HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
 HOST_RTYPE_INSTRUCTIONS ?= 300000000
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-tab5 flash monitor clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -25,6 +26,7 @@ help:
 	@echo "  make host-run                 - run native harness and render a PPM/PNG frame"
 	@echo "  make check                    - run host-side ROM/packer/gfx checks"
 	@echo "  make build / build-s3         - build ESP32-S3 480x800 firmware (primary target)"
+	@echo "  make build-cyd                - build ESP32 CYD 240x320 SPI firmware (small target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target)"
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
 	@echo "  make monitor                  - serial monitor"
@@ -54,6 +56,9 @@ check: inspect-rom pack-rom gfx-atlas host-harness
 
 build build-s3:
 	$(PIO) run -e $(S3_ENV)
+
+build-cyd:
+	$(PIO) run -e $(CYD_ENV)
 
 build-tab5:
 	$(PIO) run -e $(TAB5_ENV)

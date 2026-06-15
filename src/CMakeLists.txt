@@ -2,6 +2,7 @@ set(RTYPE_SOURCES
     "app_main.c"
     "rtype_rom.c"
     "rtype_video.c"
+        "rtype_blit.c"
         "rtype_m72_video.c"
         "rtype_m72_core.c"
         "rtype_i86_cpu.c"
@@ -14,8 +15,11 @@ if("${IDF_TARGET}" STREQUAL "esp32p4")
 elseif("${IDF_TARGET}" STREQUAL "esp32s3")
     list(APPEND RTYPE_SOURCES "rtype_display_s3.c")
     list(APPEND RTYPE_REQUIRES lcd_cyd)
+elseif("${IDF_TARGET}" STREQUAL "esp32")
+    list(APPEND RTYPE_SOURCES "rtype_display_cyd.c")
+    list(APPEND RTYPE_REQUIRES lcd_cyd)
 else()
-    message(FATAL_ERROR "Unsupported IDF_TARGET=${IDF_TARGET}; expected esp32s3 or esp32p4")
+    message(FATAL_ERROR "Unsupported IDF_TARGET=${IDF_TARGET}; expected esp32, esp32s3 or esp32p4")
 endif()
 
 idf_component_register(

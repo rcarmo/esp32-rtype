@@ -93,3 +93,10 @@ Explicitly deferred:
 - Previous decode used `1 << plane`, reversing M72 pen bits and producing wrong palette indices/colors despite correct palette RAM decode.
 - Host and firmware now decode M72 planes as: RGN_FRAC(3/4)->bit3, 2/4->bit2, 1/4->bit1, 0/4->bit0.
 - Corrected real-palette sequence artifact: `artifacts/rtype-planefix-sequence.png` (not tracked).
+
+## CYD blitter plan
+
+- Smallest CYD target added as `esp32-cyd-rtype` / `make build-cyd`.
+- Display path targets known physical format: 240x320 ILI9341 SPI RGB565.
+- `src/rtype_blit.c` implements a 384x256 -> 240x160 exact-aspect 5/8 RGB565 strip downsampler with packed 32-bit stores and no hot-loop divides.
+- Details: [cyd-blitter-plan.md](cyd-blitter-plan.md)

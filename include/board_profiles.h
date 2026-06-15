@@ -8,8 +8,13 @@
 #define CYD_BOARD_ESP32_8048S043C 1
 #endif
 #include "boards/esp32_8048s043c.h"
+#elif defined(CYD_BOARD_ESP32_2432S028) || defined(RTYPE_BOARD_ESP32_2432S028)
+#ifndef CYD_BOARD_ESP32_2432S028
+#define CYD_BOARD_ESP32_2432S028 1
+#endif
+#include "boards/esp32_2432s028.h"
 #else
-#error "This compatibility board profile currently supports only ESP32-8048S043C"
+#error "This compatibility board profile currently supports ESP32-8048S043C and ESP32-2432S028"
 #endif
 
 #ifndef LCD_PANEL_RGB565_BYTE_SWAP
