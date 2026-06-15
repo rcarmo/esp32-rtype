@@ -100,3 +100,9 @@ Explicitly deferred:
 - Display path targets known physical format: 240x320 ILI9341 SPI RGB565.
 - `src/rtype_blit.c` implements a 384x256 -> 240x160 exact-aspect 5/8 RGB565 strip downsampler with packed 32-bit stores and no hot-loop divides.
 - Details: [cyd-blitter-plan.md](cyd-blitter-plan.md)
+
+## Async CYD display worker
+
+- CYD display updates now run through a FreeRTOS worker pinned to core 0.
+- The worker performs the 5/8 RGB565 strip downsample and ILI9341 SPI flush; present calls queue the newest frame and drop stale queued frames if display bandwidth falls behind.
+- The producer uses double source framebuffers when allocation permits.

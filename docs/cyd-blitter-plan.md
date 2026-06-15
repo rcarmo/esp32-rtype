@@ -67,3 +67,11 @@ make build-cyd
 ```
 
 Current status: builds successfully for `esp32-cyd-rtype`.
+
+## Async display core
+
+- `src/rtype_display_cyd.c` now starts a FreeRTOS display worker pinned to core 0.
+- `rtype_display_present_rgb565()` queues the latest source frame and returns immediately; stale queued frames are dropped if the SPI worker falls behind.
+- The app attempts to allocate a second 384x256 RGB565 source framebuffer so the producer can render the next frame while core 0 scales/flushes the previous frame.
+- If the second framebuffer is unavailable, the producer throttles after present to reduce the chance of overwriting the only source buffer while the display task reads it.
+- This is the intended CYD split: emulator/game producer on the app core, SPI/downsample/display on core 0.

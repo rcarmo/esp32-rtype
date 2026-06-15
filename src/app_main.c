@@ -51,6 +51,12 @@ void app_main(void) {
         ESP_LOGE(TAG, "no framebuffer; leaving brightness heartbeat active");
         rtype_display_heartbeat_loop();
     }
+    uint16_t *fb_next = rtype_video_alloc_framebuffer();
+    if (fb_next != NULL) {
+        ESP_LOGI(TAG, "double framebuffer enabled for async display handoff");
+    } else {
+        ESP_LOGW(TAG, "single framebuffer only; display producer will throttle after present");
+    }
 
     rtype_m72_core_t core;
     esp_err_t core_err = rtype_m72_core_init(&core);
@@ -75,6 +81,15 @@ void app_main(void) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "present failed: %s", esp_err_to_name(err));
         }
-        vTaskDelay(pdMS_TO_TICKS(33));
+        if (fb_next != NULL) {
+            uint16_t *tmp = fb;
+            fb = fb_next;
+            fb_next = tmp;
+            vTaskDelay(pdMS_TO_TICKS(33));
+        } else {
+            // Give the async CYD display worker time to finish reading the only
+            // source buffer before the next render overwrites it.
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
     }
 }
