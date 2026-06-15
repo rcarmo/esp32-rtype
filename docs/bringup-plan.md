@@ -46,3 +46,9 @@ Explicitly deferred:
 - Firmware now includes `src/rtype_m72_video.c`, a graphics-only M72 tile/sprite renderer with the same region concepts as the host harness: `sprites`, `tiles0`, `tiles1`, `vram0`, `vram1`, sprite RAM, scroll registers, and 512-entry RGB565 palette.
 - The S3 app allocates M72 VRAM/sprite RAM in PSRAM-capable memory and renders through this engine every frame. Until external ROM regions are deployed, deterministic fallback tile/sprite pixels keep the display path active without committing ROM data.
 - Current S3 build remains green for `esp32-s3-8048s043c-rtype`; flash usage is about 225 KB.
+
+## External ROM graphics loader
+
+- Firmware exposes `rtype_rom_load_m72_graphics("/spiflash/rtype", &m72)` to load unpacked user-supplied ROM files into PSRAM-backed M72 `sprites`, `tiles0`, and `tiles1` regions.
+- The loader mirrors the MAME R-Type sprite-region layout, including first-32KB copies from the 64KB `cpu-01/11/21/31` files.
+- ROM files remain external and ignored; if the path is unavailable the S3 renderer continues with deterministic fallback pixels.

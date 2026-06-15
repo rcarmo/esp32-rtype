@@ -59,7 +59,11 @@ void app_main(void) {
     if (m72.vram0 == NULL || m72.vram1 == NULL || m72.spriteram == NULL) {
         ESP_LOGE(TAG, "no M72 video RAM; falling back to animated framebuffer pattern");
     } else {
-        ESP_LOGI(TAG, "Milestone S3 graphics: M72 tile/sprite renderer active; ROM regions external/stubbed until deployed");
+        ESP_LOGI(TAG, "Milestone S3 graphics: M72 tile/sprite renderer active");
+        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &m72);
+        if (rom_err != ESP_OK) {
+            ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
+        }
     }
 
     for (unsigned frame = 0;; frame++) {
