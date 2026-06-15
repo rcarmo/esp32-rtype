@@ -35,6 +35,11 @@ typedef struct {
     bool of;
     bool df;
     bool iff;
+    bool seg_override_active;
+    uint16_t seg_override_value;
+    unsigned interrupt_depth;
+    uint64_t iret_count;
+    char stop_reason[128];
     bool halted;
     uint8_t last_opcode;
     uint64_t insn;

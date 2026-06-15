@@ -61,5 +61,5 @@ Explicitly deferred:
 ## Firmware CPU backend status
 
 - Added `src/rtype_i86_cpu.c`, an incremental firmware-side 8086/V30-family CPU backend interface over `rtype_m72_core_t` memory/port callbacks.
-- Current firmware CPU module includes reset/vector/run plumbing plus initial boot opcodes; host harness still has the broadest opcode coverage and remains the oracle for migration.
-- Next extraction step is to migrate the host harness opcode coverage into this module and then wire S3 frame execution behind a build/runtime flag.
+- Current firmware CPU module includes reset/vector/run plumbing and the migrated host-harness opcode coverage used by the R-Type reset/frame path. The host harness remains the runtime oracle until the S3 app is wired to run CPU frames from external ROMs.
+- Next extraction step is to wire S3 frame execution behind a build/runtime flag and feed the CPU backend from external main-program ROMs.
