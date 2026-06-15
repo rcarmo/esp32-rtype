@@ -37,6 +37,6 @@ Explicitly deferred:
 
 - Native harness: `host/rtype_host_harness.cpp`.
 - `make host-run` loads the MAME-faithful 1MB V30 map plus sprite/tile ROM regions, executes the R-Type reset path and frame callbacks, and writes `artifacts/host-rtype-frame.png`.
-- Current verified run: about 11.28M instructions, 94 frame callbacks, live sprite RAM (`spr_nz=364`) and foreground VRAM (`vram0_nz≈219`) before the next CPU-fidelity frontier at an overlapping computed-jump path around `0040:3939`.
-- Host benchmark observed roughly tens of MIPS on the loaded Orange Pi; treat values as relative because host load varies.
+- Current verified run: 100M instructions cleanly, 833 frame callbacks, live sprite RAM (`spr_nz=364`) and foreground VRAM (`vram0_nz≈226`) with no CPU halt. The key fix was restoring the pre-frame stack pointer when the R-Type frame vector tail-returns to the idle loop without the normal IRET epilogue, avoiding collision with the game temp buffer at `0x2fd0`.
+- Host benchmark observed roughly 90M interpreted instructions/sec on the Orange Pi in one 100M run; treat values as relative because host load varies.
 - Rendering uses real decoded M72 graphics regions and a deterministic visibility fallback for nonzero pens whose emulated palette entry is still black at the current CPU frontier.

@@ -351,10 +351,12 @@ struct Cpu8086 {
     unsigned interrupt_depth = 0;
     uint64_t interrupt_count = 0;
     uint64_t iret_count = 0;
+    uint16_t pending_frame_sp = 0;
+    bool pending_frame_sp_valid = false;
     bool halted = false;
     uint64_t insn = 0;
     uint8_t last_opcode = 0;
-    static constexpr unsigned TRACE_LEN = 512;
+    static constexpr unsigned TRACE_LEN = 4096;
     std::array<uint32_t, TRACE_LEN> trace_pc{};
     std::array<uint8_t, TRACE_LEN> trace_op{};
     unsigned trace_pos = 0;
@@ -443,6 +445,8 @@ struct Cpu8086 {
     void push(uint16_t v) { r[SP] -= 2; note_sp(); ww(lin(s[SS], r[SP]), v); }
     uint16_t pop() { uint16_t v = rw(lin(s[SS], r[SP])); r[SP] += 2; return v; }
     void interrupt(uint8_t vector) {
+        pending_frame_sp = r[SP];
+        pending_frame_sp_valid = true;
         push(make_flags());
         push(s[CS]);
         push(ip);
@@ -604,7 +608,7 @@ struct Cpu8086 {
         case 0xd1: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t res = v; if (sub == 0) { cf = (v & 0x8000) != 0; res = uint16_t((v << 1) | (v >> 15)); } else if (sub == 1) { cf = (v & 1) != 0; res = uint16_t((v >> 1) | (v << 15)); } else if (sub == 2) { bool oldcf = cf; cf = (v & 0x8000) != 0; res = uint16_t((v << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (v & 1) != 0; res = uint16_t((v >> 1) | (oldcf ? 0x8000 : 0)); } else if (sub == 4) { cf = (v & 0x8000) != 0; res = uint16_t(v << 1); set_logic16(res); } else if (sub == 5) { cf = (v & 1) != 0; res = uint16_t(v >> 1); set_logic16(res); } else if (sub == 7) { cf = (v & 1) != 0; res = uint16_t(int16_t(v) >> 1); set_logic16(res); } else { fail("unsupported D1/%u at %05x", sub, before); return false; } if (mod == 3) r[rm] = res; else ww(a, res); return true; }
         case 0xd2: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint8_t count = rl8(1) & 0x1f; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (res >> 7)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint8_t((res >> 1) | (res << 7)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint8_t((res >> 1) | (oldcf ? 0x80 : 0)); } else if (sub == 4) { cf = (res & 0x80) != 0; res = uint8_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint8_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint8_t(int8_t(res) >> 1); } else { fail("unsupported D2/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic8(res); if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
         case 0xd3: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint8_t count = rl8(1) & 0x1f; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (res >> 15)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint16_t((res >> 1) | (res << 15)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint16_t((res >> 1) | (oldcf ? 0x8000 : 0)); } else if (sub == 4) { cf = (res & 0x8000) != 0; res = uint16_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint16_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint16_t(int16_t(res) >> 1); } else { fail("unsupported D3/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic16(res); if (mod == 3) r[rm] = res; else ww(a, res); return true; }
-        case 0xcf: ip = pop(); s[CS] = pop(); set_flags_word(pop()); iret_count++; if (interrupt_depth > 0) interrupt_depth--; return true;
+        case 0xcf: ip = pop(); s[CS] = pop(); set_flags_word(pop()); iret_count++; if (interrupt_depth > 0) interrupt_depth--; if (interrupt_depth == 0) pending_frame_sp_valid = false; return true;
         case 0xe0: { int8_t d = int8_t(fetch8()); r[CX]--; if (r[CX] != 0 && !zf) ip = uint16_t(ip + d); return true; }
         case 0xe1: { int8_t d = int8_t(fetch8()); r[CX]--; if (r[CX] != 0 && zf) ip = uint16_t(ip + d); return true; }
         case 0xe2: { int8_t d = int8_t(fetch8()); r[CX]--; if (r[CX] != 0) ip = uint16_t(ip + d); return true; }
@@ -688,12 +692,13 @@ int main(int argc, char **argv) {
         if (cpu.s[CS] == 0x0040 && cpu.ip >= 0x00d0 && cpu.ip <= 0x00f8) {
             main_loop_seen = true;
             if (cpu.interrupt_depth > 0) {
-                // The observed R-Type frame vector behaves as a callback that
-                // lands in the wait loop instead of consistently executing the
-                // CPU IRET path. Remove host-synthetic FLAGS/CS/IP frames when
-                // the game has visibly completed the frame callback.
-                cpu.r[SP] = uint16_t(cpu.r[SP] + 6u * cpu.interrupt_depth);
+                // Some R-Type frame paths tail-return to the idle loop rather
+                // than executing the ISR epilogue/IRET. Restore the exact
+                // pre-frame SP to avoid colliding with work buffers at 0x2fd0.
+                if (cpu.pending_frame_sp_valid) cpu.r[SP] = cpu.pending_frame_sp;
+                else cpu.r[SP] = uint16_t(cpu.r[SP] + 6u * cpu.interrupt_depth);
                 cpu.interrupt_depth = 0;
+                cpu.pending_frame_sp_valid = false;
             }
             if (stop_after_first_irq_loop && cpu.interrupt_count > 0) break;
         }
