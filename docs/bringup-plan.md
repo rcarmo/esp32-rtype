@@ -40,3 +40,9 @@ Explicitly deferred:
 - Current verified run: 100M instructions cleanly, 833 frame callbacks, live sprite RAM (`spr_nz=364`) and foreground VRAM (`vram0_nz≈226`) with no CPU halt. The key fix was restoring the pre-frame stack pointer when the R-Type frame vector tail-returns to the idle loop without the normal IRET epilogue, avoiding collision with the game temp buffer at `0x2fd0`.
 - Host benchmark observed roughly 90M interpreted instructions/sec on the Orange Pi in one 100M run; treat values as relative because host load varies.
 - Rendering uses real decoded M72 graphics regions and a deterministic visibility fallback for nonzero pens whose emulated palette entry is still black at the current CPU frontier.
+
+## ESP32-S3 graphics renderer status
+
+- Firmware now includes `src/rtype_m72_video.c`, a graphics-only M72 tile/sprite renderer with the same region concepts as the host harness: `sprites`, `tiles0`, `tiles1`, `vram0`, `vram1`, sprite RAM, scroll registers, and 512-entry RGB565 palette.
+- The S3 app allocates M72 VRAM/sprite RAM in PSRAM-capable memory and renders through this engine every frame. Until external ROM regions are deployed, deterministic fallback tile/sprite pixels keep the display path active without committing ROM data.
+- Current S3 build remains green for `esp32-s3-8048s043c-rtype`; flash usage is about 225 KB.

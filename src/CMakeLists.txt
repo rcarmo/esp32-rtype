@@ -2,6 +2,7 @@ set(RTYPE_SOURCES
     "app_main.c"
     "rtype_rom.c"
     "rtype_video.c"
+        "rtype_m72_video.c"
 )
 set(RTYPE_REQUIRES driver esp_psram esp_hw_support heap esp_lcd esp_timer)
 

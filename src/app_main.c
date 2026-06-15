@@ -1,5 +1,6 @@
 #include "rtype_board.h"
 #include "rtype_display.h"
+#include "rtype_m72_video.h"
 #include "rtype_rom.h"
 #include "rtype_video.h"
 
@@ -50,9 +51,24 @@ void app_main(void) {
         rtype_display_heartbeat_loop();
     }
 
-    ESP_LOGI(TAG, "Milestone 0: animated display path only; CPU/input/audio not wired yet");
+    rtype_m72_video_t m72;
+    rtype_m72_video_init(&m72);
+    m72.vram0 = rtype_m72_alloc_region(RTYPE_M72_VRAM_BYTES, "m72-vram0");
+    m72.vram1 = rtype_m72_alloc_region(RTYPE_M72_VRAM_BYTES, "m72-vram1");
+    m72.spriteram = rtype_m72_alloc_region(RTYPE_M72_SPRITERAM_BYTES, "m72-spriteram");
+    if (m72.vram0 == NULL || m72.vram1 == NULL || m72.spriteram == NULL) {
+        ESP_LOGE(TAG, "no M72 video RAM; falling back to animated framebuffer pattern");
+    } else {
+        ESP_LOGI(TAG, "Milestone S3 graphics: M72 tile/sprite renderer active; ROM regions external/stubbed until deployed");
+    }
+
     for (unsigned frame = 0;; frame++) {
-        rtype_video_render_boot_pattern(fb, frame);
+        if (m72.vram0 != NULL && m72.vram1 != NULL && m72.spriteram != NULL) {
+            rtype_m72_video_seed_probe_scene(&m72, frame);
+            rtype_m72_video_render(&m72, fb);
+        } else {
+            rtype_video_render_boot_pattern(fb, frame);
+        }
         esp_err_t err = rtype_display_present_rgb565(fb, RTYPE_GAME_W, RTYPE_GAME_H);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "present failed: %s", esp_err_to_name(err));
