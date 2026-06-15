@@ -70,3 +70,12 @@ Explicitly deferred:
 - The renderer mostly resolves nonzero pens through real palette entries (`render_palette_px≈35938`) with a smaller fallback contribution (`render_fallback_px≈3606`).
 - M72 visible X is `64..447` on a 512-wide raw screen; host and firmware renderers now subtract the visible-area X offset when writing the 384-wide framebuffer.
 - Current frame is still not done-condition quality: only about 640 nonblack visible pixels in a small `48x24` bbox, and 20M/100M/300M host frames are identical. Remaining gap is sparse/stuck live video state, not absent palette RAM.
+
+## Done-condition host evidence
+
+- After fixing ModRM displacement/immediate ordering for `C6/C7`, then adding `XCHG`, `TEST r/m,reg`, `TEST AL,imm`, `OR r/m,imm`, `POP r/m16`, `SUB r/m,reg`, `XOR AX,imm16`, and `ADD r/m8,r8`, the host harness now runs into full-screen R-Type graphics.
+- Verified long host runs:
+  - 300M instructions: full visible bbox `0,0-383,255`, active scroll `230/460`, live tile+sprite rendering, no halt before that sample.
+  - 600M instructions: no halt, `irq_count=4999`, `visible_nonblack=147418`, `visible_sprite_px=38450`, 87 output colors, active scroll `175/343`.
+  - 300M vs 600M frame delta: `AE=92993`, proving visible frame advancement.
+- This satisfies the host done condition: the harness loads the supplied R-Type ROM set and runs the game far enough to render advancing full-screen game graphics.

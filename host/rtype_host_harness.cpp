@@ -65,6 +65,7 @@ struct M72 {
     std::vector<uint8_t> tiles0 = std::vector<uint8_t>(0x20000, 0xff);
     std::vector<uint8_t> tiles1 = std::vector<uint8_t>(0x20000, 0xff);
     std::array<uint16_t, 512> palette{};
+    std::array<uint8_t, 0x400> sprite_buffer{};
     std::array<uint16_t, FB_W * FB_H> framebuffer{};
     uint16_t scrollx[2] = {0, 0};
     uint16_t scrolly[2] = {0, 0};
@@ -72,15 +73,26 @@ struct M72 {
     bool video_off = false;
     uint64_t mem_writes = 0;
     uint64_t port_writes = 0;
+    uint64_t writes_spr = 0;
+    uint64_t writes_pal0 = 0;
+    uint64_t writes_pal1 = 0;
+    uint64_t writes_vram0 = 0;
+    uint64_t writes_vram1 = 0;
     mutable uint64_t render_palette_pixels = 0;
     mutable uint64_t render_fallback_pixels = 0;
     mutable uint64_t render_tile_pixels = 0;
     mutable uint64_t render_sprite_pixels = 0;
     mutable uint64_t render_visible_nonblack = 0;
+    mutable uint64_t render_visible_tile_pixels = 0;
+    mutable uint64_t render_visible_sprite_pixels = 0;
     mutable int render_min_x = 9999;
     mutable int render_min_y = 9999;
     mutable int render_max_x = -1;
     mutable int render_max_y = -1;
+    mutable int render_raw_min_x = 9999;
+    mutable int render_raw_min_y = 9999;
+    mutable int render_raw_max_x = -1;
+    mutable int render_raw_max_y = -1;
 
     uint32_t count_nonzero(uint32_t begin, uint32_t end) const {
         uint32_t n = 0;
@@ -154,8 +166,11 @@ struct M72 {
         if ((addr <= 0x3ffff) || (addr >= 0xffff0)) return;
         mem[addr] = value;
         mem_writes++;
-        if ((addr >= 0xc8000 && addr <= 0xc8bff)) refresh_palette_group(0, addr);
-        if ((addr >= 0xcc000 && addr <= 0xccbff)) refresh_palette_group(1, addr);
+        if (addr >= 0xc0000 && addr < 0xc0400) writes_spr++;
+        if (addr >= 0xc8000 && addr <= 0xc8bff) { writes_pal0++; refresh_palette_group(0, addr); }
+        if (addr >= 0xcc000 && addr <= 0xccbff) { writes_pal1++; refresh_palette_group(1, addr); }
+        if (addr >= 0xd0000 && addr < 0xd4000) writes_vram0++;
+        if (addr >= 0xd8000 && addr < 0xdc000) writes_vram1++;
     }
 
     void write16(uint32_t addr, uint16_t value) {
@@ -184,7 +199,7 @@ struct M72 {
         switch (port & 0xff) {
         case 0x00: /* sound latch ignored */ break;
         case 0x02: video_off = (value & 0x08) != 0; break;
-        case 0x04: /* sprite DMA: live mem acts as copied spriteram for harness */ break;
+        case 0x04: std::memcpy(sprite_buffer.data(), mem.data() + 0xc0000u, sprite_buffer.size()); break;
         default: break;
         }
     }
@@ -193,6 +208,7 @@ struct M72 {
         port_writes++;
         switch (port & 0xff) {
         case 0x02: video_off = (value & 0x0008) != 0; break;
+        case 0x04: std::memcpy(sprite_buffer.data(), mem.data() + 0xc0000u, sprite_buffer.size()); break;
         case 0x06: raster_irq_position = uint16_t((value & 0x1ffu) - 128u); break;
         case 0x80: scrolly[0] = value; break;
         case 0x82: scrollx[0] = value; break;
@@ -251,7 +267,13 @@ struct M72 {
         return c;
     }
 
-    void put_pixel(int x, int y, uint16_t color) {
+    bool put_pixel(int x, int y, uint16_t color) {
+        if (color != 0) {
+            if (x < render_raw_min_x) render_raw_min_x = x;
+            if (y < render_raw_min_y) render_raw_min_y = y;
+            if (x > render_raw_max_x) render_raw_max_x = x;
+            if (y > render_raw_max_y) render_raw_max_y = y;
+        }
         // M72 raw screen is 512 pixels wide, with visible X range 64..447.
         // Convert raw hardware X into our 384-wide framebuffer coordinate.
         x -= 64;
@@ -263,8 +285,10 @@ struct M72 {
                 if (y < render_min_y) render_min_y = y;
                 if (x > render_max_x) render_max_x = x;
                 if (y > render_max_y) render_max_y = y;
+                return true;
             }
         }
+        return false;
     }
 
     void draw_tile_layer(const std::vector<uint8_t> &region, uint32_t vram_base, unsigned palette_base,
@@ -289,7 +313,7 @@ struct M72 {
                         if (transparent && pen == 0) continue;
                         uint16_t rgb = visible_color(palette_base + color * 16u + pen, pen);
                         if (pen != 0) render_tile_pixels++;
-                        put_pixel(base_x + int(px), base_y + int(py), rgb);
+                        if (put_pixel(base_x + int(px), base_y + int(py), rgb) && pen != 0) render_visible_tile_pixels++;
                     }
                 }
             }
@@ -298,11 +322,11 @@ struct M72 {
 
     void draw_sprites() {
         for (int offs = 0x400 - 8; offs >= 0; offs -= 8) {
-            uint32_t base = 0xc0000u + uint32_t(offs);
-            uint16_t syw = read16(base + 0);
-            uint16_t code = read16(base + 2);
-            uint16_t attr = read16(base + 4);
-            uint16_t sxw = read16(base + 6);
+            const uint8_t *sp = sprite_buffer.data() + offs;
+            uint16_t syw = (uint16_t)sp[0] | ((uint16_t)sp[1] << 8);
+            uint16_t code = (uint16_t)sp[2] | ((uint16_t)sp[3] << 8);
+            uint16_t attr = (uint16_t)sp[4] | ((uint16_t)sp[5] << 8);
+            uint16_t sxw = (uint16_t)sp[6] | ((uint16_t)sp[7] << 8);
             if ((syw | code | attr | sxw) == 0) continue;
             unsigned color = attr & 0x0fu;
             int sx = -256 + int(sxw & 0x03ffu);
@@ -324,7 +348,7 @@ struct M72 {
                             uint8_t pen = decode_sprite_pixel(c, rx, ry);
                             if (pen == 0) continue;
                             render_sprite_pixels++;
-                            put_pixel(sx + int(x * 16u + px), sy + int(y * 16u + py), visible_color(color * 16u + pen, pen));
+                            if (put_pixel(sx + int(x * 16u + px), sy + int(y * 16u + py), visible_color(color * 16u + pen, pen))) render_visible_sprite_pixels++;
                         }
                     }
                 }
@@ -350,10 +374,16 @@ struct M72 {
         render_tile_pixels = 0;
         render_sprite_pixels = 0;
         render_visible_nonblack = 0;
+        render_visible_tile_pixels = 0;
+        render_visible_sprite_pixels = 0;
         render_min_x = 9999;
         render_min_y = 9999;
         render_max_x = -1;
         render_max_y = -1;
+        render_raw_min_x = 9999;
+        render_raw_min_y = 9999;
+        render_raw_max_x = -1;
+        render_raw_max_y = -1;
         bool any_vram = false;
         for (uint32_t a = 0xd0000; a < 0xdc000; a++) any_vram |= mem[a] != 0;
         if (seed_if_blank && !any_vram) seed_static_probe_vram();
@@ -394,7 +424,7 @@ struct Cpu8086 {
     uint16_t r[8]{};
     uint16_t s[4]{};
     uint16_t ip = 0xfff0;
-    bool cf = false, zf = false, sf = false, of = false, df = false, iff = false;
+    bool cf = false, pf = false, af = false, zf = false, sf = false, of = false, df = false, iff = false;
     bool seg_override_active = false;
     uint16_t seg_override_value = 0;
     unsigned interrupt_depth = 0;
@@ -410,9 +440,9 @@ struct Cpu8086 {
     std::array<uint8_t, TRACE_LEN> trace_op{};
     unsigned trace_pos = 0;
     uint32_t current_pc_for_write = 0;
-    std::array<char, 3> watch_desc{{0, 0, 0}};
-    std::array<uint32_t, 3> watch_pc{{0, 0, 0}};
-    std::array<uint16_t, 3> watch_value{{0, 0, 0}};
+    std::array<char, 4> watch_desc{{0, 0, 0, 0}};
+    std::array<uint32_t, 4> watch_pc{{0, 0, 0, 0}};
+    std::array<uint16_t, 4> watch_value{{0, 0, 0, 0}};
     uint16_t min_sp = 0xffff;
     uint32_t min_sp_pc = 0;
     uint32_t suspicious_sp_pc = 0;
@@ -434,7 +464,8 @@ struct Cpu8086 {
     void note_watch(uint32_t a, uint16_t v) {
         uint32_t x = a & 0xfffff;
         int idx = -1;
-        if (x >= 0x43090 && x <= 0x43091) idx = 0;
+        if (x >= 0x40000 && x <= 0x40001) idx = 3;
+        else if (x >= 0x43090 && x <= 0x43091) idx = 0;
         else if (x >= 0x43092 && x <= 0x43093) idx = 1;
         else if (x >= 0x430d9 && x <= 0x430da) idx = 2;
         if (idx >= 0) {
@@ -463,15 +494,20 @@ struct Cpu8086 {
         return dummy;
     }
     uint16_t &rwreg(unsigned id) { return r[id & 7]; }
-    void set_logic8(uint8_t v) { zf = (v == 0); sf = (v & 0x80) != 0; cf = of = false; }
-    void set_logic16(uint16_t v) { zf = (v == 0); sf = (v & 0x8000) != 0; cf = of = false; }
-    void set_add8(uint8_t a, uint8_t b, uint8_t res) { zf = res == 0; sf = res & 0x80; cf = uint16_t(a) + b > 0xff; of = ((~(a ^ b) & (a ^ res)) & 0x80) != 0; }
-    void set_add16(uint16_t a, uint16_t b, uint16_t res) { zf = res == 0; sf = res & 0x8000; cf = uint32_t(a) + b > 0xffff; of = ((~(a ^ b) & (a ^ res)) & 0x8000) != 0; }
-    void set_sub8(uint8_t a, uint8_t b, uint8_t res) { zf = res == 0; sf = res & 0x80; cf = a < b; of = ((a ^ b) & (a ^ res) & 0x80) != 0; }
-    void set_sub16(uint16_t a, uint16_t b, uint16_t res) { zf = res == 0; sf = res & 0x8000; cf = a < b; of = ((a ^ b) & (a ^ res) & 0x8000) != 0; }
+    static bool parity_even(uint8_t v) { v ^= v >> 4; v &= 0x0f; return ((0x6996u >> v) & 1u) == 0; }
+    void set_szp8(uint8_t v) { zf = (v == 0); sf = (v & 0x80) != 0; pf = parity_even(v); }
+    void set_szp16(uint16_t v) { zf = (v == 0); sf = (v & 0x8000) != 0; pf = parity_even((uint8_t)v); }
+    void set_logic8(uint8_t v) { set_szp8(v); cf = of = false; af = false; }
+    void set_logic16(uint16_t v) { set_szp16(v); cf = of = false; af = false; }
+    void set_add8(uint8_t a, uint8_t b, uint8_t res) { set_szp8(res); cf = uint16_t(a) + b > 0xff; af = ((a ^ b ^ res) & 0x10) != 0; of = ((~(a ^ b) & (a ^ res)) & 0x80) != 0; }
+    void set_add16(uint16_t a, uint16_t b, uint16_t res) { set_szp16(res); cf = uint32_t(a) + b > 0xffff; af = ((a ^ b ^ res) & 0x10) != 0; of = ((~(a ^ b) & (a ^ res)) & 0x8000) != 0; }
+    void set_sub8(uint8_t a, uint8_t b, uint8_t res) { set_szp8(res); cf = a < b; af = ((a ^ b ^ res) & 0x10) != 0; of = ((a ^ b) & (a ^ res) & 0x80) != 0; }
+    void set_sub16(uint16_t a, uint16_t b, uint16_t res) { set_szp16(res); cf = a < b; af = ((a ^ b ^ res) & 0x10) != 0; of = ((a ^ b) & (a ^ res) & 0x8000) != 0; }
     uint16_t make_flags() const {
         uint16_t f = 0xf002;
         if (cf) f |= 0x0001;
+        if (pf) f |= 0x0004;
+        if (af) f |= 0x0010;
         if (zf) f |= 0x0040;
         if (sf) f |= 0x0080;
         if (iff) f |= 0x0200;
@@ -481,6 +517,8 @@ struct Cpu8086 {
     }
     void set_flags_word(uint16_t f) {
         cf = (f & 0x0001) != 0;
+        pf = (f & 0x0004) != 0;
+        af = (f & 0x0010) != 0;
         zf = (f & 0x0040) != 0;
         sf = (f & 0x0080) != 0;
         iff = (f & 0x0200) != 0;
@@ -547,6 +585,8 @@ struct Cpu8086 {
         case 0x7: return !cf && !zf;
         case 0x8: return sf;
         case 0x9: return !sf;
+        case 0xa: return pf;
+        case 0xb: return !pf;
         case 0xc: return sf != of;
         case 0xd: return sf == of;
         case 0xe: return zf || (sf != of);
@@ -611,27 +651,40 @@ struct Cpu8086 {
         case 0x23: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t src = (mod == 3) ? r[rm] : rw(ea(mod, rm)); r[reg] &= src; set_logic16(r[reg]); return true; }
         case 0x24: { uint8_t imm = fetch8(); rl8(0) &= imm; set_logic8(rl8(0)); return true; }
         case 0x25: { uint16_t imm = fetch16(); r[AX] &= imm; set_logic16(r[AX]); return true; }
+        case 0x28: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t dst = 0; if (mod == 3) dst = rl8(rm); else { a = ea(mod, rm); dst = rb(a); } uint8_t res = uint8_t(dst - rl8(reg)); set_sub8(dst, rl8(reg), res); if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
+        case 0x29: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t dst = 0; if (mod == 3) dst = r[rm]; else { a = ea(mod, rm); dst = rw(a); } uint16_t res = uint16_t(dst - r[reg]); set_sub16(dst, r[reg], res); if (mod == 3) r[rm] = res; else ww(a, res); return true; }
+        case 0x2a: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t src = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); uint8_t old = rl8(reg); rl8(reg) = uint8_t(old - src); set_sub8(old, src, rl8(reg)); return true; }
         case 0x2b: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t src = (mod == 3) ? r[rm] : rw(ea(mod, rm)); uint16_t old = r[reg]; r[reg] = uint16_t(old - src); set_sub16(old, src, r[reg]); return true; }
         case 0x2c: { uint8_t imm = fetch8(); uint8_t a = rl8(0); uint8_t res = uint8_t(a - imm); rl8(0) = res; set_sub8(a, imm, res); return true; }
         case 0x2d: { uint16_t imm = fetch16(); uint16_t old = r[AX]; r[AX] = uint16_t(old - imm); set_sub16(old, imm, r[AX]); return true; }
-        case 0x2f: { uint8_t old = rl8(0); bool oldcf = cf; if (((old & 0x0f) > 9)) { rl8(0) = uint8_t(rl8(0) - 6); } if (old > 0x99 || oldcf) { rl8(0) = uint8_t(rl8(0) - 0x60); cf = true; } else { cf = false; } zf = rl8(0) == 0; sf = (rl8(0) & 0x80) != 0; return true; }
+        case 0x27: { uint8_t old = rl8(0); bool oldcf = cf; if (((rl8(0) & 0x0f) > 9) || af) { rl8(0) = uint8_t(rl8(0) + 6); af = true; } else af = false; if (old > 0x99 || oldcf) { rl8(0) = uint8_t(rl8(0) + 0x60); cf = true; } else cf = false; set_szp8(rl8(0)); return true; }
+        case 0x2f: { uint8_t old = rl8(0); bool oldcf = cf; if (((rl8(0) & 0x0f) > 9) || af) { rl8(0) = uint8_t(rl8(0) - 6); af = true; } else af = false; if (old > 0x99 || oldcf) { rl8(0) = uint8_t(rl8(0) - 0x60); cf = true; } else cf = false; set_szp8(rl8(0)); return true; }
+        case 0x00: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t dst = 0; if (mod == 3) dst = rl8(rm); else { a = ea(mod, rm); dst = rb(a); } uint8_t res = uint8_t(dst + rl8(reg)); set_add8(dst, rl8(reg), res); if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
         case 0x01: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t dst = 0; if (mod == 3) dst = r[rm]; else { a = ea(mod, rm); dst = rw(a); } uint16_t res = uint16_t(dst + r[reg]); set_add16(dst, r[reg], res); if (mod == 3) r[rm] = res; else ww(a, res); return true; }
         case 0x02: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t src = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); uint8_t old = rl8(reg); rl8(reg) = uint8_t(old + src); set_add8(old, src, rl8(reg)); return true; }
         case 0x03: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t src = (mod == 3) ? r[rm] : rw(ea(mod, rm)); uint16_t old = r[reg]; r[reg] = uint16_t(old + src); set_add16(old, src, r[reg]); return true; }
+        case 0x04: { uint8_t imm = fetch8(); uint8_t old = rl8(0); rl8(0) = uint8_t(old + imm); set_add8(old, imm, rl8(0)); return true; }
         case 0x05: { uint16_t imm = fetch16(); uint16_t old = r[AX]; r[AX] = uint16_t(old + imm); set_add16(old, imm, r[AX]); return true; }
         case 0x32: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t src = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); rl8(reg) ^= src; set_logic8(rl8(reg)); return true; }
         case 0x33: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t src = (mod == 3) ? r[rm] : rw(ea(mod, rm)); r[reg] ^= src; set_logic16(r[reg]); return true; }
+        case 0x34: { uint8_t imm = fetch8(); rl8(0) ^= imm; set_logic8(rl8(0)); return true; }
+        case 0x35: { uint16_t imm = fetch16(); r[AX] ^= imm; set_logic16(r[AX]); return true; }
         case 0x38: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t dst = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); uint8_t res = uint8_t(dst - rl8(reg)); set_sub8(dst, rl8(reg), res); return true; }
         case 0x39: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t dst = (mod == 3) ? r[rm] : rw(ea(mod, rm)); uint16_t res = uint16_t(dst - r[reg]); set_sub16(dst, r[reg], res); return true; }
         case 0x3a: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t src = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); uint8_t res = uint8_t(rl8(reg) - src); set_sub8(rl8(reg), src, res); return true; }
         case 0x3b: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t src = (mod == 3) ? r[rm] : rw(ea(mod, rm)); uint16_t res = uint16_t(r[reg] - src); set_sub16(r[reg], src, res); return true; }
         case 0x3c: { uint8_t imm = fetch8(); uint8_t res = uint8_t(rl8(0) - imm); set_sub8(rl8(0), imm, res); return true; }
         case 0x3d: { uint16_t imm = fetch16(); uint16_t res = uint16_t(r[AX] - imm); set_sub16(r[AX], imm, res); return true; }
-        case 0x80: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t imm = fetch8(); uint8_t res = v; bool write = true; if (sub == 0) { res = uint8_t(v + imm); set_add8(v, imm, res); } else if (sub == 4) { res = uint8_t(v & imm); set_logic8(res); } else if (sub == 5) { res = uint8_t(v - imm); set_sub8(v, imm, res); } else if (sub == 6) { res = uint8_t(v ^ imm); set_logic8(res); } else if (sub == 7) { res = uint8_t(v - imm); set_sub8(v, imm, res); write = false; } else { fail("unsupported 80/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) rl8(rm) = res; else wb(a, res); } return true; }
-        case 0x81: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t imm = fetch16(); uint16_t res = v; bool write = true; if (sub == 0) { res = uint16_t(v + imm); set_add16(v, imm, res); } else if (sub == 4) { res = uint16_t(v & imm); set_logic16(res); } else if (sub == 5) { res = uint16_t(v - imm); set_sub16(v, imm, res); } else if (sub == 7) { res = uint16_t(v - imm); set_sub16(v, imm, res); write = false; } else { fail("unsupported 81/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) r[rm] = res; else ww(a, res); } return true; }
-        case 0x83: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t imm = uint16_t(int16_t(int8_t(fetch8()))); uint16_t res = v; bool write = true; if (sub == 0) { res = uint16_t(v + imm); set_add16(v, imm, res); } else if (sub == 5) { res = uint16_t(v - imm); set_sub16(v, imm, res); } else if (sub == 7) { res = uint16_t(v - imm); set_sub16(v, imm, res); write = false; } else { fail("unsupported 83/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) r[rm] = res; else ww(a, res); } return true; }
+        case 0x80: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t imm = fetch8(); uint8_t res = v; bool write = true; if (sub == 0) { res = uint8_t(v + imm); set_add8(v, imm, res); } else if (sub == 1) { res = uint8_t(v | imm); set_logic8(res); } else if (sub == 4) { res = uint8_t(v & imm); set_logic8(res); } else if (sub == 5) { res = uint8_t(v - imm); set_sub8(v, imm, res); } else if (sub == 6) { res = uint8_t(v ^ imm); set_logic8(res); } else if (sub == 7) { res = uint8_t(v - imm); set_sub8(v, imm, res); write = false; } else { fail("unsupported 80/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) rl8(rm) = res; else wb(a, res); } return true; }
+        case 0x81: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t imm = fetch16(); uint16_t res = v; bool write = true; if (sub == 0) { res = uint16_t(v + imm); set_add16(v, imm, res); } else if (sub == 1) { res = uint16_t(v | imm); set_logic16(res); } else if (sub == 4) { res = uint16_t(v & imm); set_logic16(res); } else if (sub == 5) { res = uint16_t(v - imm); set_sub16(v, imm, res); } else if (sub == 7) { res = uint16_t(v - imm); set_sub16(v, imm, res); write = false; } else { fail("unsupported 81/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) r[rm] = res; else ww(a, res); } return true; }
+        case 0x83: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t imm = uint16_t(int16_t(int8_t(fetch8()))); uint16_t res = v; bool write = true; if (sub == 0) { res = uint16_t(v + imm); set_add16(v, imm, res); } else if (sub == 1) { res = uint16_t(v | imm); set_logic16(res); } else if (sub == 5) { res = uint16_t(v - imm); set_sub16(v, imm, res); } else if (sub == 7) { res = uint16_t(v - imm); set_sub16(v, imm, res); write = false; } else { fail("unsupported 83/%u at %05x", sub, before); return false; } if (write) { if (mod == 3) r[rm] = res; else ww(a, res); } return true; }
+        case 0x84: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint8_t v = (mod == 3) ? rl8(rm) : rb(ea(mod, rm)); set_logic8(uint8_t(v & rl8(reg))); return true; }
+        case 0x85: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; uint16_t v = (mod == 3) ? r[rm] : rw(ea(mod, rm)); set_logic16(uint16_t(v & r[reg])); return true; }
+        case 0x86: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; if (mod == 3) { uint8_t tmp = rl8(rm); rl8(rm) = rl8(reg); rl8(reg) = tmp; } else { uint32_t a = ea(mod, rm); uint8_t tmp = rb(a); wb(a, rl8(reg)); rl8(reg) = tmp; } return true; }
+        case 0x87: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; if (mod == 3) { uint16_t tmp = r[rm]; r[rm] = r[reg]; r[reg] = tmp; } else { uint32_t a = ea(mod, rm); uint16_t tmp = rw(a); ww(a, r[reg]); r[reg] = tmp; } return true; }
         case 0x8c: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 3, rm = mr & 7; if (mod == 3) r[rm] = s[reg]; else ww(ea(mod, rm), s[reg]); return true; }
         case 0x8e: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 3, rm = mr & 7; s[reg] = (mod == 3) ? r[rm] : rw(ea(mod, rm)); return true; }
+        case 0x8f: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; if (sub != 0) { fail("unsupported 8F/%u at %05x", sub, before); return false; } uint16_t v = pop(); if (mod == 3) r[rm] = v; else ww(ea(mod, rm), v); return true; }
         case 0x8b: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; r[reg] = (mod == 3) ? r[rm] : rw(ea(mod, rm)); return true; }
         case 0x89: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; if (mod == 3) r[rm] = r[reg]; else ww(ea(mod, rm), r[reg]); return true; }
         case 0x88: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, reg = (mr >> 3) & 7, rm = mr & 7; if (mod == 3) rl8(rm) = rl8(reg); else wb(ea(mod, rm), rl8(reg)); return true; }
@@ -644,14 +697,14 @@ struct Cpu8086 {
         case 0x98: r[AX] = uint16_t(int16_t(int8_t(rl8(0)))); return true;
         case 0x99: r[DX] = (r[AX] & 0x8000) ? 0xffff : 0x0000; return true;
         case 0x9a: { uint16_t off = fetch16(); uint16_t seg = fetch16(); push(s[CS]); push(ip); s[CS] = seg; ip = off; return true; }
-        case 0xc0: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint8_t count = fetch8() & 0x1f; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (res >> 7)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint8_t((res >> 1) | (res << 7)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint8_t((res >> 1) | (oldcf ? 0x80 : 0)); } else if (sub == 4) { cf = (res & 0x80) != 0; res = uint8_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint8_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint8_t(int8_t(res) >> 1); } else { fail("unsupported C0/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic8(res); if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
-        case 0xc1: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint8_t count = fetch8() & 0x1f; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (res >> 15)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint16_t((res >> 1) | (res << 15)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint16_t((res >> 1) | (oldcf ? 0x8000 : 0)); } else if (sub == 4) { cf = (res & 0x8000) != 0; res = uint16_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint16_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint16_t(int16_t(res) >> 1); } else { fail("unsupported C1/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic16(res); if (mod == 3) r[rm] = res; else ww(a, res); return true; }
+        case 0xc0: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t count = fetch8() & 0x1f; uint8_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (res >> 7)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint8_t((res >> 1) | (res << 7)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x80) != 0; res = uint8_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint8_t((res >> 1) | (oldcf ? 0x80 : 0)); } else if (sub == 4) { cf = (res & 0x80) != 0; res = uint8_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint8_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint8_t(int8_t(res) >> 1); } else { fail("unsupported C0/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic8(res); if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
+        case 0xc1: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint8_t count = fetch8() & 0x1f; uint16_t res = v; while (count--) { if (sub == 0) { cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (res >> 15)); } else if (sub == 1) { cf = (res & 1) != 0; res = uint16_t((res >> 1) | (res << 15)); } else if (sub == 2) { bool oldcf = cf; cf = (res & 0x8000) != 0; res = uint16_t((res << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (res & 1) != 0; res = uint16_t((res >> 1) | (oldcf ? 0x8000 : 0)); } else if (sub == 4) { cf = (res & 0x8000) != 0; res = uint16_t(res << 1); } else if (sub == 5) { cf = (res & 1) != 0; res = uint16_t(res >> 1); } else if (sub == 7) { cf = (res & 1) != 0; res = uint16_t(int16_t(res) >> 1); } else { fail("unsupported C1/%u at %05x", sub, before); return false; } } if (sub >= 4) set_logic16(res); if (mod == 3) r[rm] = res; else ww(a, res); return true; }
         case 0xc2: { uint16_t adj = fetch16(); if (adj > 0x40) { fail("implausible RET imm16 adj=0x%04x at %05x", adj, before); return false; } ip = pop(); r[SP] = uint16_t(r[SP] + adj); return true; }
         case 0xc3: ip = pop(); return true;
         case 0xca: { uint16_t adj = fetch16(); ip = pop(); s[CS] = pop(); r[SP] = uint16_t(r[SP] + adj); return true; }
         case 0xcb: ip = pop(); s[CS] = pop(); return true;
-        case 0xc6: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; if (sub != 0) { fail("unsupported C6/%u at %05x", sub, before); return false; } uint8_t imm = fetch8(); if (mod == 3) rl8(rm) = imm; else wb(ea(mod, rm), imm); return true; }
-        case 0xc7: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; if (sub != 0) { fail("unsupported C7/%u at %05x", sub, before); return false; } uint16_t imm = fetch16(); if (mod == 3) r[rm] = imm; else ww(ea(mod, rm), imm); return true; }
+        case 0xc6: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; if (sub != 0) { fail("unsupported C6/%u at %05x", sub, before); return false; } uint32_t a = 0; if (mod != 3) a = ea(mod, rm); uint8_t imm = fetch8(); if (mod == 3) rl8(rm) = imm; else wb(a, imm); return true; }
+        case 0xc7: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; if (sub != 0) { fail("unsupported C7/%u at %05x", sub, before); return false; } uint32_t a = 0; if (mod != 3) a = ea(mod, rm); uint16_t imm = fetch16(); if (mod == 3) r[rm] = imm; else ww(a, imm); return true; }
         case 0xcd: { uint8_t num = fetch8(); fail("INT %02x at %05x", num, before); return false; }
         case 0xd0: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint8_t v = 0; if (mod == 3) v = rl8(rm); else { a = ea(mod, rm); v = rb(a); } uint8_t res = v; if (sub == 0) { cf = (v & 0x80) != 0; res = uint8_t((v << 1) | (v >> 7)); } else if (sub == 1) { cf = (v & 1) != 0; res = uint8_t((v >> 1) | (v << 7)); } else if (sub == 2) { bool oldcf = cf; cf = (v & 0x80) != 0; res = uint8_t((v << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (v & 1) != 0; res = uint8_t((v >> 1) | (oldcf ? 0x80 : 0)); } else if (sub == 4) { cf = (v & 0x80) != 0; res = uint8_t(v << 1); set_logic8(res); } else if (sub == 5) { cf = (v & 1) != 0; res = uint8_t(v >> 1); set_logic8(res); } else if (sub == 7) { cf = (v & 1) != 0; res = uint8_t(int8_t(v) >> 1); set_logic8(res); } else { fail("unsupported D0/%u at %05x", sub, before); return false; } if (mod == 3) rl8(rm) = res; else wb(a, res); return true; }
         case 0xd1: { uint8_t mr = fetch8(); unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7; uint32_t a = 0; uint16_t v = 0; if (mod == 3) v = r[rm]; else { a = ea(mod, rm); v = rw(a); } uint16_t res = v; if (sub == 0) { cf = (v & 0x8000) != 0; res = uint16_t((v << 1) | (v >> 15)); } else if (sub == 1) { cf = (v & 1) != 0; res = uint16_t((v >> 1) | (v << 15)); } else if (sub == 2) { bool oldcf = cf; cf = (v & 0x8000) != 0; res = uint16_t((v << 1) | (oldcf ? 1 : 0)); } else if (sub == 3) { bool oldcf = cf; cf = (v & 1) != 0; res = uint16_t((v >> 1) | (oldcf ? 0x8000 : 0)); } else if (sub == 4) { cf = (v & 0x8000) != 0; res = uint16_t(v << 1); set_logic16(res); } else if (sub == 5) { cf = (v & 1) != 0; res = uint16_t(v >> 1); set_logic16(res); } else if (sub == 7) { cf = (v & 1) != 0; res = uint16_t(int16_t(v) >> 1); set_logic16(res); } else { fail("unsupported D1/%u at %05x", sub, before); return false; } if (mod == 3) r[rm] = res; else ww(a, res); return true; }
@@ -675,6 +728,7 @@ struct Cpu8086 {
         case 0xef: m.out16(r[DX], r[AX]); return true;
         case 0xa4: { uint16_t seg = seg_override_active ? seg_override_value : s[DS]; uint8_t v = rb(lin(seg, r[SI])); wb(lin(s[ES], r[DI]), v); r[SI] = uint16_t(r[SI] + (df ? -1 : 1)); r[DI] = uint16_t(r[DI] + (df ? -1 : 1)); return true; }
         case 0xa5: { uint16_t seg = seg_override_active ? seg_override_value : s[DS]; uint16_t v = rw(lin(seg, r[SI])); ww(lin(s[ES], r[DI]), v); r[SI] = uint16_t(r[SI] + (df ? -2 : 2)); r[DI] = uint16_t(r[DI] + (df ? -2 : 2)); return true; }
+        case 0xa8: { uint8_t imm = fetch8(); set_logic8(uint8_t(rl8(0) & imm)); return true; }
         case 0xa9: { uint16_t imm = fetch16(); uint16_t res = uint16_t(r[AX] & imm); set_logic16(res); return true; }
         case 0xaa: wb(lin(s[ES], r[DI]), rl8(0)); r[DI] = uint16_t(r[DI] + (df ? -1 : 1)); return true;
         case 0xab: ww(lin(s[ES], r[DI]), r[AX]); r[DI] = uint16_t(r[DI] + (df ? -2 : 2)); return true;
@@ -720,6 +774,7 @@ int main(int argc, char **argv) {
     uint64_t instruction_limit = 2000000;
     bool seed = true;
     bool stop_after_first_irq_loop = false;
+    bool force_game_state = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--packed" && i + 1 < argc) packed = argv[++i];
@@ -728,6 +783,7 @@ int main(int argc, char **argv) {
         else if (a == "--out" && i + 1 < argc) out = argv[++i];
         else if (a == "--no-seed") seed = false;
         else if (a == "--stop-after-first-irq-loop") stop_after_first_irq_loop = true;
+        else if (a == "--force-game-state") force_game_state = true;
         else { usage(argv[0]); return 2; }
     }
 
@@ -751,6 +807,9 @@ int main(int argc, char **argv) {
             }
             if (stop_after_first_irq_loop && cpu.interrupt_count > 0) break;
         }
+        if (force_game_state && m.read16(0x42eb4) > 0x40 && m.read16(0x40000) == 0x06a0) {
+            m.write16(0x40000, 0x1115);
+        }
         const bool vector_ready = (m.read16(0x20u * 4u) == 0x00fe && m.read16(0x20u * 4u + 2u) == 0x0040);
         const bool in_main_loop = (cpu.s[CS] == 0x0040 && cpu.ip >= 0x00d0 && cpu.ip <= 0x00f8);
         if (main_loop_seen && in_main_loop && vector_ready && cpu.iff && cpu.interrupt_depth == 0 && cpu.insn >= next_vblank_irq) {
@@ -766,36 +825,64 @@ int main(int argc, char **argv) {
 
     const uint16_t vec20_off = m.read16(0x20u * 4u);
     const uint16_t vec20_seg = m.read16(0x20u * 4u + 2u);
+    const uint16_t vec22_off = m.read16(0x22u * 4u);
+    const uint16_t vec22_seg = m.read16(0x22u * 4u + 2u);
     const uint16_t state_ptr = m.read16(0x40000u + 0x3090u);
     const uint16_t state_sel = m.read16(0x40000u + 0x3092u);
     const uint16_t state_timer = m.read16(0x40000u + 0x30d9u);
     const uint8_t low_3c = m.read8(0x40000u + 0x003cu);
     const uint8_t low_3e = m.read8(0x40000u + 0x003eu);
+    const uint16_t main_state = m.read16(0x40000u + 0x3060u);
+    const uint16_t root_state = m.read16(0x40000u + 0x0000u);
+    const uint16_t diag_state = m.read16(0x40000u + 0x308eu);
+    const uint16_t frame_counter = m.read16(0x40000u + 0x2eb4u);
+    const uint16_t input0_shadow = m.read16(0x40000u + 0x2040u);
+    const uint16_t input1_shadow = m.read16(0x40000u + 0x2042u);
+    const uint16_t dsw_shadow = m.read16(0x40000u + 0x2044u);
+    const uint16_t q_head = m.read16(0x40000u + 0x2ed8u);
+    const uint16_t q_tail = m.read16(0x40000u + 0x2edau);
+    const uint16_t q0_func = m.read16(0x40000u + 0x1e20u);
+    const uint16_t q0_cx = m.read16(0x40000u + 0x1e22u);
+    const uint16_t q0_dx = m.read16(0x40000u + 0x1e24u);
+    const uint16_t obj20_func = m.read16(0x40020u);
+    const uint16_t obj40_func = m.read16(0x40040u);
+    const uint16_t obj540_func = m.read16(0x40540u);
+    const uint16_t obj540_next = m.read16(0x4055cu);
+    const uint16_t obj560_func = m.read16(0x40560u);
     const uint32_t pal0_nz = m.palette_nonzero(0, 256);
     const uint32_t pal1_nz = m.palette_nonzero(256, 512);
     const uint32_t palram0_nz = m.palette_ram_nonzero(0xc8000);
     const uint32_t palram1_nz = m.palette_ram_nonzero(0xcc000);
-    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu vram0_nz=%u vram1_nz=%u spr_nz=%u render_tile_px=%llu render_sprite_px=%llu render_palette_px=%llu render_fallback_px=%llu visible_nonblack=%llu visible_bbox=%d,%d-%d,%d pal0_nz=%u pal1_nz=%u palram0_nz=%u palram1_nz=%u pal_samples=%04x,%04x,%04x,%04x,%04x,%04x vec20=%04x:%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
+    std::printf("HOST_RTYPE_RUN pc=%05x cs:ip=%04x:%04x sp=%04x ss=%04x min_sp=%04x@%05x suspicious_sp=%04x@%05x insn=%llu halted=%d irq_depth=%u irq_count=%llu iret_count=%llu reason='%s' last_opcode=%02x mem_writes=%llu port_writes=%llu region_writes=spr:%llu,pal0:%llu,pal1:%llu,vram0:%llu,vram1:%llu vram0_nz=%u vram1_nz=%u spr_nz=%u render_tile_px=%llu render_sprite_px=%llu render_palette_px=%llu render_fallback_px=%llu visible_nonblack=%llu visible_tile_px=%llu visible_sprite_px=%llu visible_bbox=%d,%d-%d,%d raw_bbox=%d,%d-%d,%d pal0_nz=%u pal1_nz=%u palram0_nz=%u palram1_nz=%u pal_samples=%04x,%04x,%04x,%04x,%04x,%04x vec20=%04x:%04x vec22=%04x:%04x raster=%u main_state=%04x root_state=%04x diag_state=%04x frame_counter=%04x input_shadow=%04x,%04x,%04x queue=%04x/%04x q0=%04x,%04x,%04x obj=%04x,%04x,%04x,%04x,%04x state_ptr=%04x state_sel=%04x state_timer=%04x low3c=%02x low3e=%02x watch3090=%c@%05x:%04x watch3092=%c@%05x:%04x watch30d9=%c@%05x:%04x watch0000=%c@%05x:%04x scroll=(%u,%u)/(%u,%u) video_off=%d out=%s seconds=%.6f ips=%.0f\n",
                 cpu.pc(), cpu.s[CS], cpu.ip, cpu.r[SP], cpu.s[SS], cpu.min_sp, cpu.min_sp_pc, cpu.suspicious_sp, cpu.suspicious_sp_pc,
                 (unsigned long long)cpu.insn, cpu.halted ? 1 : 0,
                 cpu.interrupt_depth, (unsigned long long)cpu.interrupt_count, (unsigned long long)cpu.iret_count,
                 cpu.stop_reason, cpu.last_opcode,
                 (unsigned long long)m.mem_writes, (unsigned long long)m.port_writes,
+                (unsigned long long)m.writes_spr, (unsigned long long)m.writes_pal0, (unsigned long long)m.writes_pal1,
+                (unsigned long long)m.writes_vram0, (unsigned long long)m.writes_vram1,
                 m.count_nonzero(0xd0000, 0xd4000), m.count_nonzero(0xd8000, 0xdc000),
                 m.count_nonzero(0xc0000, 0xc0400),
                 (unsigned long long)m.render_tile_pixels, (unsigned long long)m.render_sprite_pixels,
                 (unsigned long long)m.render_palette_pixels, (unsigned long long)m.render_fallback_pixels,
-                (unsigned long long)m.render_visible_nonblack, m.render_min_x, m.render_min_y, m.render_max_x, m.render_max_y,
+                (unsigned long long)m.render_visible_nonblack,
+                (unsigned long long)m.render_visible_tile_pixels, (unsigned long long)m.render_visible_sprite_pixels,
+                m.render_min_x, m.render_min_y, m.render_max_x, m.render_max_y,
+                m.render_raw_min_x, m.render_raw_min_y, m.render_raw_max_x, m.render_raw_max_y,
                 pal0_nz, pal1_nz, palram0_nz, palram1_nz,
                 m.palette[0], m.palette[1], m.palette[15], m.palette[256], m.palette[257], m.palette[271],
-                vec20_seg, vec20_off,
+                vec20_seg, vec20_off, vec22_seg, vec22_off, (unsigned)(m.raster_irq_position & 0x1ffu),
+                main_state, root_state, diag_state, frame_counter, input0_shadow, input1_shadow, dsw_shadow,
+                q_head, q_tail, q0_func, q0_cx, q0_dx,
+                obj20_func, obj40_func, obj540_func, obj540_next, obj560_func,
                 state_ptr, state_sel, state_timer, low_3c, low_3e,
                 cpu.watch_desc[0] ? cpu.watch_desc[0] : '-', cpu.watch_pc[0], cpu.watch_value[0],
                 cpu.watch_desc[1] ? cpu.watch_desc[1] : '-', cpu.watch_pc[1], cpu.watch_value[1],
                 cpu.watch_desc[2] ? cpu.watch_desc[2] : '-', cpu.watch_pc[2], cpu.watch_value[2],
+                cpu.watch_desc[3] ? cpu.watch_desc[3] : '-', cpu.watch_pc[3], cpu.watch_value[3],
                 m.scrollx[0], m.scrolly[0], m.scrollx[1], m.scrolly[1], m.video_off ? 1 : 0,
                 out.c_str(), sec, sec > 0 ? (double)cpu.insn / sec : 0.0);
-    if (cpu.halted || cpu.interrupt_depth > 0) {
+    if (cpu.halted || cpu.interrupt_depth > 0 || stop_after_first_irq_loop) {
         std::printf("HOST_RTYPE_TRACE_TAIL");
         unsigned n = cpu.trace_pos < Cpu8086::TRACE_LEN ? cpu.trace_pos : Cpu8086::TRACE_LEN;
         for (unsigned i = 0; i < n; i++) {
