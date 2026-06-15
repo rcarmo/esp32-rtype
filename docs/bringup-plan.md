@@ -57,3 +57,9 @@ Explicitly deferred:
 
 - Firmware now has `src/rtype_m72_core.c`, an ESP-friendly M72 core state layer with a 1MB CPU address map, work/video/sprite/palette memory mapping, idle input ports, scroll/video-off ports, and frame rendering through `rtype_m72_video`.
 - The S3 app initializes this core and renders from its mapped VRAM/sprite RAM, aligning firmware structure with the host harness and preparing for a shared CPU backend.
+
+## Firmware CPU backend status
+
+- Added `src/rtype_i86_cpu.c`, an incremental firmware-side 8086/V30-family CPU backend interface over `rtype_m72_core_t` memory/port callbacks.
+- Current firmware CPU module includes reset/vector/run plumbing plus initial boot opcodes; host harness still has the broadest opcode coverage and remains the oracle for migration.
+- Next extraction step is to migrate the host harness opcode coverage into this module and then wire S3 frame execution behind a build/runtime flag.
