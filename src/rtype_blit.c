@@ -159,9 +159,6 @@ static inline uint16_t boot_pattern_pixel(unsigned sx, unsigned sy, unsigned fra
     uint8_t r = (uint8_t)((sx * 255u) / (RTYPE_BLIT_SRC_W - 1u));
     uint8_t g = (uint8_t)((sy * 255u) / (RTYPE_BLIT_SRC_H - 1u));
     uint8_t b = (uint8_t)((frame_no * 3u + sx / 8u + sy / 8u) & 0xffu);
-    if (sx < 4u || sy < 4u || sx >= RTYPE_BLIT_SRC_W - 4u || sy >= RTYPE_BLIT_SRC_H - 4u) {
-        r = g = b = 255;
-    }
     if (((sx / 16u) + (sy / 16u) + (frame_no / 15u)) & 1u) {
         b = (uint8_t)(255u - b);
     }
