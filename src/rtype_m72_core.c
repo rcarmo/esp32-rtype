@@ -1,4 +1,5 @@
 #include "rtype_m72_core.h"
+#include "rtype_board.h"
 
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -23,7 +24,14 @@ static uint8_t pal5(uint16_t v) {
 }
 
 static esp_err_t alloc_sparse_region(uint8_t **ptr, size_t bytes, const char *name) {
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    // On S3, preserve the large contiguous internal block for the hot main CPU
+    // ROM map; sparse RAM can live in PSRAM.
     *ptr = rtype_m72_alloc_region(bytes, name);
+#else
+    *ptr = (uint8_t *)heap_caps_calloc(1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (*ptr == NULL) *ptr = rtype_m72_alloc_region(bytes, name);
+#endif
     if (*ptr == NULL) return ESP_ERR_NO_MEM;
     memset(*ptr, 0xff, bytes);
     return ESP_OK;
@@ -34,7 +42,11 @@ esp_err_t rtype_m72_core_init(rtype_m72_core_t *core) {
     memset(core, 0, sizeof(*core));
     rtype_m72_video_init(&core->video);
     core->cpu_map_size = RTYPE_M72_CPU_MAP_BYTES;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    core->cpu_map = NULL;
+#else
     core->cpu_map = rtype_m72_alloc_region(core->cpu_map_size, "m72-cpu-map");
+#endif
     if (core->cpu_map != NULL) {
         memset(core->cpu_map, 0xff, core->cpu_map_size);
         core->video.vram0 = core->cpu_map + RTYPE_M72_VRAM0_BASE;
@@ -44,7 +56,7 @@ esp_err_t rtype_m72_core_init(rtype_m72_core_t *core) {
         return ESP_OK;
     }
 
-    ESP_LOGW(TAG, "flat 1MB CPU map unavailable; using sparse no-PSRAM M72 memory map");
+    ESP_LOGW(TAG, "flat 1MB CPU map unavailable/disabled; using sparse M72 memory map");
     core->sparse_mode = 1;
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->work_ram, RTYPE_M72_WORK_RAM_BYTES, "m72-work"), TAG, "work alloc");
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->sprite_ram, RTYPE_M72_SPRITERAM_BYTES, "m72-sprite"), TAG, "sprite alloc");

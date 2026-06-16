@@ -2,6 +2,7 @@
 #define RTYPE_ROM_H
 
 #include "esp_err.h"
+#include "rtype_m72_core.h"
 #include "rtype_m72_video.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -28,6 +29,7 @@ typedef struct {
 
 const rtype_rom_expected_t *rtype_rom_expected_table(unsigned *count);
 esp_err_t rtype_rom_probe_project_copy(const char *path, rtype_rom_set_info_t *info);
+esp_err_t rtype_rom_load_m72_maincpu(const char *path, rtype_m72_core_t *core);
 esp_err_t rtype_rom_load_m72_graphics(const char *path, rtype_m72_video_t *video);
 void rtype_rom_log_expected(void);
 void rtype_rom_log_probe_result(const rtype_rom_set_info_t *info);

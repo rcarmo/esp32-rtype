@@ -121,6 +121,71 @@ static esp_err_t ensure_region(uint8_t **ptr, size_t bytes, const char *name) {
     return *ptr != NULL ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
+static esp_err_t load_interleaved_pair(uint8_t *dst, size_t dst_size, const char *base_path,
+                                       const char *even_name, const char *odd_name) {
+    if (dst == NULL || base_path == NULL || even_name == NULL || odd_name == NULL || dst_size != 0x20000u) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t *even = rtype_m72_alloc_region(0x10000u, "maincpu-even-temp");
+    uint8_t *odd = rtype_m72_alloc_region(0x10000u, "maincpu-odd-temp");
+    if (even == NULL || odd == NULL) {
+        if (even) heap_caps_free(even);
+        if (odd) heap_caps_free(odd);
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err = load_file_slice(even, 0x10000u, 0, base_path, even_name, 0x10000u, 0x10000u);
+    if (err == ESP_OK) err = load_file_slice(odd, 0x10000u, 0, base_path, odd_name, 0x10000u, 0x10000u);
+    if (err == ESP_OK) {
+        for (unsigned i = 0; i < 0x10000u; i++) {
+            dst[i * 2u] = even[i];
+            dst[i * 2u + 1u] = odd[i];
+        }
+        ESP_LOGI(TAG, "interleaved %-14s/%-14s -> maincpu pair bytes=%u", even_name, odd_name, (unsigned)dst_size);
+    }
+    heap_caps_free(even);
+    heap_caps_free(odd);
+    return err;
+}
+
+esp_err_t rtype_rom_load_m72_maincpu(const char *path, rtype_m72_core_t *core) {
+    if (path == NULL || core == NULL) return ESP_ERR_INVALID_ARG;
+    uint8_t *low_pair = rtype_m72_alloc_region(0x20000u, "maincpu-low-pair-temp");
+    uint8_t *high_pair = rtype_m72_alloc_region(0x20000u, "maincpu-high-pair-temp");
+    if (low_pair == NULL || high_pair == NULL) {
+        if (low_pair) heap_caps_free(low_pair);
+        if (high_pair) heap_caps_free(high_pair);
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err = load_interleaved_pair(low_pair, 0x20000u, path, "rt_r-l0-.bin", "rt_r-h0-.bin");
+    if (err == ESP_OK) err = load_interleaved_pair(high_pair, 0x20000u, path, "rt_r-l1-.bin", "rt_r-h1-.bin");
+    if (err == ESP_OK) {
+        if (core->cpu_map != NULL) {
+            err = rtype_m72_core_map_maincpu(core, low_pair, 0x20000u, high_pair, 0x20000u);
+        } else {
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            uint8_t *rom = (uint8_t *)heap_caps_malloc(0x40000u, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (rom != NULL) ESP_LOGI(TAG, "allocated S3 internal maincpu ROM map: %u bytes @%p", 0x40000u, (void *)rom);
+            if (rom == NULL) rom = rtype_m72_alloc_region(0x40000u, "m72-maincpu-rom-map");
+#else
+            uint8_t *rom = rtype_m72_alloc_region(0x40000u, "m72-maincpu-rom-map");
+#endif
+            if (rom == NULL) err = ESP_ERR_NO_MEM;
+            else {
+                memcpy(rom + 0x00000u, low_pair, 0x20000u);
+                memcpy(rom + 0x20000u, high_pair, 0x20000u);
+                core->rom_map = rom;
+                core->rom_map_size = 0x40000u;
+                ESP_LOGI(TAG, "M72 compact sparse main CPU ROM map loaded @%p", (void *)rom);
+            }
+        }
+    }
+    if (err == ESP_OK) ESP_LOGI(TAG, "M72 main CPU ROMs loaded from %s", path);
+    else ESP_LOGW(TAG, "M72 main CPU ROM load failed from %s: %s", path, esp_err_to_name(err));
+    heap_caps_free(low_pair);
+    heap_caps_free(high_pair);
+    return err;
+}
+
 esp_err_t rtype_rom_load_m72_graphics(const char *path, rtype_m72_video_t *video) {
     if (path == NULL || video == NULL) return ESP_ERR_INVALID_ARG;
 

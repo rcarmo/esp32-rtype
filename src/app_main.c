@@ -12,12 +12,36 @@
 #include "esp_log.h"
 #include "esp_psram.h"
 #include "esp_timer.h"
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+#include "esp_vfs_fat.h"
+#include "wear_levelling.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include <inttypes.h>
 
 static const char *TAG = "rtype_app";
+
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+static wl_handle_t s_spiflash_wl = WL_INVALID_HANDLE;
+
+static esp_err_t mount_spiflash_storage(void) {
+    if (s_spiflash_wl != WL_INVALID_HANDLE) return ESP_OK;
+    const esp_vfs_fat_mount_config_t cfg = {
+        .format_if_mount_failed = false,
+        .max_files = 24,
+        .allocation_unit_size = 4096,
+    };
+    esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl("/spiflash", "storage", &cfg, &s_spiflash_wl);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "mounted FAT storage partition at /spiflash");
+    } else {
+        ESP_LOGW(TAG, "failed to mount /spiflash storage (%s); external ROM files unavailable", esp_err_to_name(err));
+    }
+    return err;
+}
+#endif
 
 static uint32_t count_palette_nonzero(const rtype_m72_video_t *video, unsigned begin, unsigned end) {
     if (video == NULL) return 0;
@@ -53,8 +77,10 @@ void app_main(void) {
     log_system_info();
     rtype_rom_log_expected();
 
+#if defined(RTYPE_BOARD_ESP32_2432S028)
     ESP_ERROR_CHECK(rtype_display_init());
     ESP_ERROR_CHECK(rtype_display_set_brightness(100));
+#endif
 
     static rtype_m72_core_t core;
     esp_err_t core_err = rtype_m72_core_init(&core);
@@ -69,6 +95,17 @@ void app_main(void) {
         } else {
             ESP_LOGI(TAG, "CYD sparse M72 CPU core mapped from storage partition");
         }
+#elif defined(RTYPE_BOARD_ESP32_8048S043C)
+        ESP_LOGI(TAG, "S3 full-framebuffer M72 core + V30 backend active");
+        (void)mount_spiflash_storage();
+        cpu_rom_err = rtype_rom_load_m72_maincpu("/spiflash/rtype", &core);
+        if (cpu_rom_err != ESP_OK) {
+            ESP_LOGW(TAG, "external main CPU ROMs not loaded (%s); S3 will use graphics-only fallback", esp_err_to_name(cpu_rom_err));
+        }
+        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
+        if (rom_err != ESP_OK) {
+            ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
+        }
 #else
         ESP_LOGI(TAG, "Milestone graphics: M72 core + tile/sprite renderer active");
         esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
@@ -77,6 +114,11 @@ void app_main(void) {
         }
 #endif
     }
+
+#if !defined(RTYPE_BOARD_ESP32_2432S028)
+    ESP_ERROR_CHECK(rtype_display_init());
+    ESP_ERROR_CHECK(rtype_display_set_brightness(100));
+#endif
 
     uint16_t *fb = rtype_video_alloc_framebuffer();
     if (fb == NULL) {
@@ -198,10 +240,95 @@ void app_main(void) {
         ESP_LOGW(TAG, "single framebuffer only; display producer will throttle after present");
     }
 
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    rtype_i86_cpu_t full_cpu;
+    bool full_cpu_running = (core_err == ESP_OK && cpu_rom_err == ESP_OK);
+    uint64_t full_next_vblank = 120000;
+    const uint64_t full_wait_skip_window = 118000;
+    int64_t full_next_vblank_us = esp_timer_get_time();
+    const int64_t full_frame_period_us = 16667;
+    bool full_main_loop_seen = false;
+    bool full_frame_vector_ready = false;
+    uint64_t full_last_presented_irq = 0;
+    uint64_t full_last_perf_irq = 0;
+    int64_t full_last_perf_us = esp_timer_get_time();
+    if (full_cpu_running) {
+        rtype_i86_reset(&full_cpu, &core);
+        ESP_LOGI(TAG, "S3 full-framebuffer V30 backend starting");
+    }
+#endif
+
     for (unsigned frame = 0;; frame++) {
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+        bool full_present_due = false;
+        if (full_cpu_running && !full_frame_vector_ready) {
+            full_frame_vector_ready = (rtype_m72_core_read16(&core, 0x20u * 4u) == 0x00fe &&
+                                       rtype_m72_core_read16(&core, 0x20u * 4u + 2u) == 0x0040);
+        }
+        if (full_cpu_running) {
+            uint64_t target = full_cpu.insn + 1000000ull;
+            while (!full_cpu.halted && full_cpu.insn < target) {
+                bool in_main_loop = (full_cpu.s[RTYPE_I86_CS] == 0x0040 && full_cpu.ip >= 0x00d0 && full_cpu.ip <= 0x00f8);
+                if (in_main_loop) {
+                    full_main_loop_seen = true;
+                    rtype_i86_complete_frame_if_idle(&full_cpu);
+                    if (full_cpu.interrupt_count > 0 && full_cpu.interrupt_count >= full_last_presented_irq + 16u) {
+                        full_present_due = true;
+                        break;
+                    }
+                }
+                bool idle_queue_empty_tail = (full_cpu.s[RTYPE_I86_CS] == 0x0040 && full_cpu.ip == 0x00ddu && full_cpu.zf);
+                bool late_wait_tail = idle_queue_empty_tail && full_cpu.insn + full_wait_skip_window >= full_next_vblank;
+                if (full_main_loop_seen && full_frame_vector_ready && full_cpu.iff && full_cpu.interrupt_depth == 0 &&
+                    (late_wait_tail || (in_main_loop && full_cpu.insn >= full_next_vblank))) {
+                    if (late_wait_tail && full_cpu.insn < full_next_vblank) full_cpu.insn = full_next_vblank;
+                    int64_t now_us = esp_timer_get_time();
+                    if (now_us >= full_next_vblank_us) {
+                        rtype_i86_interrupt(&full_cpu, 0x20);
+                        full_next_vblank += 120000;
+                        full_next_vblank_us += full_frame_period_us;
+                        if (full_next_vblank_us < now_us - full_frame_period_us) full_next_vblank_us = now_us + full_frame_period_us;
+                    } else {
+                        break;
+                    }
+                }
+                rtype_i86_step(&full_cpu);
+            }
+            if (full_cpu.halted) {
+                ESP_LOGW(TAG, "S3 CPU halted pc=0x%05" PRIx32 " opcode=0x%02x reason=%s",
+                         rtype_i86_pc(&full_cpu), full_cpu.last_opcode, full_cpu.stop_reason);
+                full_cpu_running = false;
+            }
+            int64_t now_us = esp_timer_get_time();
+            if (now_us - full_last_perf_us >= 5000000) {
+                uint64_t dirq = full_cpu.interrupt_count - full_last_perf_irq;
+                uint64_t dt_us = (uint64_t)(now_us - full_last_perf_us);
+                ESP_LOGI(TAG, "S3 PERF irq_s=%llu frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u)",
+                         (unsigned long long)((dirq * 1000000ull) / dt_us),
+                         (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
+                         (unsigned)rtype_m72_core_read16(&core, 0x40000u),
+                         (unsigned)core.video.scrollx[0], (unsigned)core.video.scrolly[0],
+                         (unsigned)core.video.scrollx[1], (unsigned)core.video.scrolly[1]);
+                full_last_perf_irq = full_cpu.interrupt_count;
+                full_last_perf_us = now_us;
+            }
+        }
+#endif
         if (core_err == ESP_OK) {
-            rtype_m72_video_seed_probe_scene(&core.video, frame);
-            rtype_m72_core_render_frame(&core, fb);
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            if (full_cpu_running) {
+                if (!full_present_due && full_cpu.interrupt_count == full_last_presented_irq) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    continue;
+                }
+                full_last_presented_irq = full_cpu.interrupt_count;
+                rtype_m72_core_render_frame(&core, fb);
+            } else
+#endif
+            {
+                rtype_m72_video_seed_probe_scene(&core.video, frame);
+                rtype_m72_core_render_frame(&core, fb);
+            }
         } else {
             rtype_video_render_boot_pattern(fb, frame);
         }
@@ -213,9 +340,14 @@ void app_main(void) {
             uint16_t *tmp = fb;
             fb = fb_next;
             fb_next = tmp;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            // S3 display has its own snapshot queue/task; keep the emulator core fed.
+            vTaskDelay(pdMS_TO_TICKS(1));
+#else
             vTaskDelay(pdMS_TO_TICKS(33));
+#endif
         } else {
-            // Give the async CYD display worker time to finish reading the only
+            // Give an async display worker time to finish reading the only
             // source buffer before the next render overwrites it.
             vTaskDelay(pdMS_TO_TICKS(50));
         }

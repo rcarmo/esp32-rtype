@@ -4,6 +4,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "lcd_cyd.h"
 
@@ -11,14 +12,79 @@
 #include <string.h>
 
 static const char *TAG = "rtype_display_s3";
+
+#define S3_SNAPSHOT_COUNT 2u
+
+typedef struct {
+    const uint16_t *framebuffer;
+    unsigned snapshot_index;
+    uint32_t sequence;
+} s3_display_job_t;
+
 static bool s_ready;
 static uint16_t *s_rgb_fb;
+static uint16_t *s_snapshots[S3_SNAPSHOT_COUNT];
+static volatile bool s_snapshot_busy[S3_SNAPSHOT_COUNT];
+static unsigned s_next_snapshot;
+static QueueHandle_t s_display_queue;
+static TaskHandle_t s_display_task;
+static uint32_t s_present_sequence;
+static volatile uint32_t s_displayed_sequence;
+static volatile uint32_t s_dropped_jobs;
+static uint16_t s_x_lut[RTYPE_LCD_W];
+static uint16_t s_y_lut[RTYPE_LCD_H];
+static bool s_luts_ready;
+
+static void init_scale_luts(void) {
+    if (s_luts_ready) return;
+    for (unsigned x = 0; x < RTYPE_LCD_W; x++) {
+        unsigned sx = (x * RTYPE_GAME_W) / RTYPE_LCD_W;
+        if (sx >= RTYPE_GAME_W) sx = RTYPE_GAME_W - 1u;
+        s_x_lut[x] = (uint16_t)sx;
+    }
+    for (unsigned y = 0; y < RTYPE_LCD_H; y++) {
+        unsigned sy = (y * RTYPE_GAME_H) / RTYPE_LCD_H;
+        if (sy >= RTYPE_GAME_H) sy = RTYPE_GAME_H - 1u;
+        s_y_lut[y] = (uint16_t)sy;
+    }
+    s_luts_ready = true;
+}
+
+static void blit_game_to_full_panel(const uint16_t *src) {
+    if (src == NULL || s_rgb_fb == NULL) return;
+    init_scale_luts();
+    for (unsigned y = 0; y < RTYPE_LCD_H; y++) {
+        const uint16_t *src_row = src + (size_t)s_y_lut[y] * RTYPE_GAME_W;
+        uint16_t *dst = s_rgb_fb + (size_t)y * RTYPE_LCD_W;
+        for (unsigned x = 0; x < RTYPE_LCD_W; x++) {
+            dst[x] = src_row[s_x_lut[x]];
+        }
+    }
+}
+
+static void s3_display_task(void *arg) {
+    (void)arg;
+    ESP_LOGI(TAG, "S3 display task started on core %d", xPortGetCoreID());
+    s3_display_job_t job;
+    while (true) {
+        if (xQueueReceive(s_display_queue, &job, portMAX_DELAY) == pdTRUE) {
+            s3_display_job_t newer;
+            while (xQueueReceive(s_display_queue, &newer, 0) == pdTRUE) {
+                s_snapshot_busy[job.snapshot_index] = false;
+                job = newer;
+                s_dropped_jobs++;
+            }
+            blit_game_to_full_panel(job.framebuffer);
+            s_snapshot_busy[job.snapshot_index] = false;
+            s_displayed_sequence = job.sequence;
+        }
+    }
+}
 
 esp_err_t rtype_display_init(void) {
     if (s_ready) return ESP_OK;
-    ESP_LOGI(TAG, "initializing S3 RGB panel: physical=%ux%u viewport=%ux%u+%u,%u game=%ux%u scale=%u",
-             RTYPE_LCD_W, RTYPE_LCD_H, RTYPE_VIEW_W, RTYPE_VIEW_H, RTYPE_VIEW_X, RTYPE_VIEW_Y,
-             RTYPE_GAME_W, RTYPE_GAME_H, RTYPE_VIEW_SCALE);
+    ESP_LOGI(TAG, "initializing S3 RGB panel: physical=%ux%u fill-blit source=%ux%u",
+             RTYPE_LCD_W, RTYPE_LCD_H, RTYPE_GAME_W, RTYPE_GAME_H);
     lcd_cyd_init();
     void *fb = NULL;
     lcd_get_rgb_framebuffer(&fb);
@@ -28,6 +94,28 @@ esp_err_t rtype_display_init(void) {
         return ESP_ERR_INVALID_STATE;
     }
     ESP_LOGI(TAG, "RGB panel framebuffer @%p", (void *)s_rgb_fb);
+
+    for (unsigned i = 0; i < S3_SNAPSHOT_COUNT; i++) {
+        s_snapshots[i] = (uint16_t *)heap_caps_malloc((size_t)RTYPE_GAME_W * RTYPE_GAME_H * sizeof(uint16_t),
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_snapshots[i] == NULL) {
+            ESP_LOGE(TAG, "failed to allocate S3 display snapshot %u", i);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    s_display_queue = xQueueCreate(2, sizeof(s3_display_job_t));
+    if (s_display_queue == NULL) {
+        ESP_LOGE(TAG, "failed to create S3 display queue");
+        return ESP_ERR_NO_MEM;
+    }
+    BaseType_t ok = xTaskCreatePinnedToCore(s3_display_task, "rtype-s3-display", 4096,
+                                            NULL, tskIDLE_PRIORITY + 2, &s_display_task, 1);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "failed to start S3 display task; using blocking fallback");
+        s_display_task = NULL;
+    }
+
     s_ready = true;
     return ESP_OK;
 }
@@ -37,29 +125,40 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
     return rtype_display_init();
 }
 
-static inline uint16_t background_pixel(unsigned x, unsigned y) {
-    if (x < 4u || y < 4u || x >= RTYPE_LCD_W - 4u || y >= RTYPE_LCD_H - 4u) return 0xffffu;
-    if ((x % 80u) < 2u || (y % 80u) < 2u) return rtype_rgb565(20, 24, 38);
-    return rtype_rgb565(2, 4, 10);
-}
-
 esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned width, unsigned height) {
-    if (framebuffer == NULL || width == 0 || height == 0) return ESP_ERR_INVALID_ARG;
+    if (framebuffer == NULL || width != RTYPE_GAME_W || height != RTYPE_GAME_H) return ESP_ERR_INVALID_ARG;
     esp_err_t err = rtype_display_init();
     if (err != ESP_OK) return err;
 
-    for (unsigned y = 0; y < RTYPE_LCD_H; y++) {
-        uint16_t *dst = s_rgb_fb + (size_t)y * RTYPE_LCD_W;
-        for (unsigned x = 0; x < RTYPE_LCD_W; x++) {
-            uint16_t px = background_pixel(x, y);
-            if (x >= RTYPE_VIEW_X && x < RTYPE_VIEW_X + RTYPE_VIEW_W &&
-                y >= RTYPE_VIEW_Y && y < RTYPE_VIEW_Y + RTYPE_VIEW_H) {
-                const unsigned sx = ((x - RTYPE_VIEW_X) * width) / RTYPE_VIEW_W;
-                const unsigned sy = ((y - RTYPE_VIEW_Y) * height) / RTYPE_VIEW_H;
-                px = framebuffer[(size_t)sy * width + sx];
-            }
-            dst[x] = px;
+    if (s_display_task == NULL || s_display_queue == NULL) {
+        blit_game_to_full_panel(framebuffer);
+        return ESP_OK;
+    }
+
+    unsigned chosen = S3_SNAPSHOT_COUNT;
+    for (unsigned n = 0; n < S3_SNAPSHOT_COUNT; n++) {
+        unsigned i = (s_next_snapshot + n) % S3_SNAPSHOT_COUNT;
+        if (!s_snapshot_busy[i]) {
+            chosen = i;
+            break;
         }
+    }
+    if (chosen == S3_SNAPSHOT_COUNT) {
+        s_dropped_jobs++;
+        return ESP_OK;
+    }
+
+    s_snapshot_busy[chosen] = true;
+    s_next_snapshot = (chosen + 1u) % S3_SNAPSHOT_COUNT;
+    memcpy(s_snapshots[chosen], framebuffer, (size_t)RTYPE_GAME_W * RTYPE_GAME_H * sizeof(uint16_t));
+    s3_display_job_t job = {
+        .framebuffer = s_snapshots[chosen],
+        .snapshot_index = chosen,
+        .sequence = ++s_present_sequence,
+    };
+    if (xQueueSend(s_display_queue, &job, 0) != pdTRUE) {
+        s_snapshot_busy[chosen] = false;
+        s_dropped_jobs++;
     }
     return ESP_OK;
 }
