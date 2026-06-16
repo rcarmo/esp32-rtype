@@ -14,7 +14,7 @@
 static const char *TAG = "rtype_display_s3";
 
 #define S3_SNAPSHOT_COUNT 2u
-#define S3_DIRECT_FRAMEBUFFER_HANDOFF 1
+#define S3_DIRECT_FRAMEBUFFER_HANDOFF 0
 
 typedef struct {
     const uint16_t *framebuffer;

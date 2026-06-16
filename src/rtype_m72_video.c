@@ -10,6 +10,10 @@
 
 static const char *TAG = "rtype_m72";
 
+#ifndef RTYPE_S3_LAYER_DEBUG
+#define RTYPE_S3_LAYER_DEBUG 0
+#endif
+
 static uint16_t read16le(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
@@ -285,9 +289,10 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
                 if (dst_x_base < 0) px_begin = -dst_x_base;
                 if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
                 if (px_begin >= px_end) continue;
-                uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W + dst_x_base;
+                uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W;
                 for (int px_i = px_begin; px_i < px_end; px_i++) {
                     unsigned px = (unsigned)px_i;
+                    unsigned dst_x = (unsigned)(dst_x_base + px_i);
                     uint8_t pen;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
                     if (cache_ok) {
@@ -308,12 +313,127 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
                     }
                     if (transparent && pen == 0) continue;
                     unsigned pi = palette_base + color * 16u + pen;
-                    dst[px_i] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                    dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
                 }
             }
         }
     }
 }
+
+
+static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb, const uint8_t *region,
+                                   size_t region_size, const uint8_t *vram, unsigned palette_base,
+                                   uint16_t sx_scroll, uint16_t sy_scroll,
+                                   const uint16_t transmask_by_group[4]) {
+    if (vram == NULL || transmask_by_group == NULL) return;
+    const unsigned quarter = (unsigned)(region_size / 4u);
+    const unsigned plane0 = quarter * 3u;
+    const unsigned plane1 = quarter * 2u;
+    const unsigned plane2 = quarter;
+    const unsigned plane3 = 0u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    unsigned decoded_tile_codes = 0;
+    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
+#endif
+    for (unsigned ty = 0; ty < 64u; ty++) {
+        for (unsigned tx = 0; tx < 64u; tx++) {
+            const uint8_t *entry = vram + (ty * 64u + tx) * 4u;
+            uint16_t raw_code = read16le(entry);
+            uint16_t attr = read16le(entry + 2u);
+            unsigned code = raw_code & 0x3fffu;
+            unsigned color = attr & 0x0fu;
+            unsigned group = (attr >> 6) & 3u;
+            uint16_t transmask = transmask_by_group[group];
+            if (transmask == 0xffffu) continue;
+            bool flipx = (raw_code & 0x4000u) != 0;
+            bool flipy = (raw_code & 0x8000u) != 0;
+            int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
+            int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
+            while (base_x < -8) base_x += 512;
+            while (base_y < -8) base_y += 512;
+            if (base_x >= (int)RTYPE_GAME_W || base_y >= (int)RTYPE_GAME_H) continue;
+
+            const bool rom_ok = (region != NULL && region_size >= 4u && code * 8u < quarter);
+            const unsigned tile_base = code * 8u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            const bool cache_ok = (decoded_tile_rows != NULL && code < decoded_tile_codes);
+#endif
+            for (unsigned py = 0; py < 8u; py++) {
+                int dst_y = base_y + (int)py;
+                if (dst_y < 0 || dst_y >= (int)RTYPE_GAME_H) continue;
+                unsigned ry = flipy ? (7u - py) : py;
+                uint8_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                uint32_t packed_row = cache_ok ? decoded_tile_rows[code * 8u + ry] : 0;
+                if (!cache_ok && rom_ok) {
+#else
+                if (rom_ok) {
+#endif
+                    unsigned row = tile_base + ry;
+                    unsigned off0 = plane0 + row;
+                    unsigned off1 = plane1 + row;
+                    unsigned off2 = plane2 + row;
+                    unsigned off3 = plane3 + row;
+                    b0 = (off0 < region_size) ? region[off0] : 0;
+                    b1 = (off1 < region_size) ? region[off1] : 0;
+                    b2 = (off2 < region_size) ? region[off2] : 0;
+                    b3 = (off3 < region_size) ? region[off3] : 0;
+                }
+                int dst_x_base = base_x - 64;
+                int px_begin = 0;
+                int px_end = 8;
+                if (dst_x_base < 0) px_begin = -dst_x_base;
+                if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
+                if (px_begin >= px_end) continue;
+                uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W;
+                for (int px_i = px_begin; px_i < px_end; px_i++) {
+                    unsigned px = (unsigned)px_i;
+                    unsigned dst_x = (unsigned)(dst_x_base + px_i);
+                    uint8_t pen;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                    if (cache_ok) {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        pen = (uint8_t)((packed_row >> ((7u - rx) * 4u)) & 0x0fu);
+                    } else
+#endif
+                    if (rom_ok) {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        unsigned bit = 7u - rx;
+                        pen = (uint8_t)((((b0 >> bit) & 1u) << 3) |
+                                        (((b1 >> bit) & 1u) << 2) |
+                                        (((b2 >> bit) & 1u) << 1) |
+                                        ((b3 >> bit) & 1u));
+                    } else {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        pen = fallback_tile_pixel(code, rx, ry);
+                    }
+                    if (transmask & (1u << pen)) continue;
+                    unsigned pi = palette_base + color * 16u + pen;
+                    dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                }
+            }
+        }
+    }
+}
+
+static void draw_m72_mame_tile_layers(const rtype_m72_video_t *video, uint16_t *fb) {
+    // MAME m72_v.cpp VIDEO_START(m72) transmask setup and screen_update draw order.
+    static const uint16_t fg_layer1_low[4]  = {0x0001u, 0xff01u, 0xffffu, 0xffffu};
+    static const uint16_t fg_layer0_high[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
+    // screen_update temporarily changes BG group 2 to set_transmask(2, 0xffff, 0x0000).
+    static const uint16_t bg_layer1_low[4]  = {0x0000u, 0xff00u, 0x0000u, 0xfffeu};
+    static const uint16_t bg_layer0_high[4] = {0xffffu, 0x00ffu, 0xffffu, 0x0001u};
+
+    draw_tile_layer_masked(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
+                           video->scrollx[1], video->scrolly[1], bg_layer1_low);
+    draw_tile_layer_masked(video, fb, video->tiles0, video->tiles0_size, video->vram0, 256u,
+                           video->scrollx[0], video->scrolly[0], fg_layer1_low);
+    draw_tile_layer_masked(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
+                           video->scrollx[1], video->scrolly[1], bg_layer0_high);
+    draw_tile_layer_masked(video, fb, video->tiles0, video->tiles0_size, video->vram0, 256u,
+                           video->scrollx[0], video->scrolly[0], fg_layer0_high);
+}
+
 
 static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
@@ -380,9 +500,10 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
                     if (dst_x_base < 0) px_begin = -dst_x_base;
                     if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
                     if (px_begin >= px_end) continue;
-                    uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W + dst_x_base;
+                    uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W;
                     for (int px_i = px_begin; px_i < px_end; px_i++) {
                         unsigned px = (unsigned)px_i;
+                        unsigned dst_x = (unsigned)(dst_x_base + px_i);
                         unsigned rx = flipx ? (15u - px) : px;
                         uint8_t pen;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
@@ -408,7 +529,7 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
                         }
                         if (pen == 0) continue;
                         unsigned pi = color * 16u + pen;
-                        dst[px_i] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                        dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
                     }
                 }
             }
@@ -812,14 +933,56 @@ void rtype_m72_video_render_cyd_composited_columns(const rtype_m72_video_t *vide
     }
 }
 
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+static void render_s3_sampled_frame(const rtype_m72_video_t *video, uint16_t *fb) {
+    static sprite_entry_t sprite_entries[RTYPE_M72_SPRITERAM_BYTES / 8u];
+    const bool have_sprites = sprite_ram_has_nonzero(video);
+    unsigned sprite_entry_count = have_sprites ? collect_visible_sprite_entries(video, sprite_entries, sizeof(sprite_entries) / sizeof(sprite_entries[0])) : 0;
+
+    for (unsigned y = 0; y < RTYPE_GAME_H; y++) {
+        uint16_t *out = fb + (size_t)y * RTYPE_GAME_W;
+        for (unsigned x = 0; x < RTYPE_GAME_W; x++) {
+            unsigned raw_x = x + 64u;
+            unsigned raw_y = y;
+            bool hit = false;
+            uint16_t px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
+                                                  256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
+            bool fg_hit = false;
+            uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                  256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+            if (fg_hit) px = fg;
+            if (sprite_entry_count != 0) {
+                bool sp_hit = false;
+                uint16_t sp = sample_sprite_entries(video, sprite_entries, sprite_entry_count, raw_x, raw_y, &sp_hit);
+                if (sp_hit) px = sp;
+            }
+            out[x] = px;
+        }
+    }
+}
+#endif
+
 void rtype_m72_video_render(const rtype_m72_video_t *video, uint16_t *fb) {
     if (video == NULL || fb == NULL) return;
     uint16_t bg = video->video_off ? 0 : rtype_rgb565(4, 8, 16);
     for (size_t i = 0; i < (size_t)RTYPE_GAME_W * RTYPE_GAME_H; i++) fb[i] = bg;
     if (video->video_off) return;
+#if defined(RTYPE_BOARD_ESP32_8048S043C) && RTYPE_S3_LAYER_DEBUG == 1
+    draw_tile_layer(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
+                    video->scrollx[1], video->scrolly[1], false);
+#elif defined(RTYPE_BOARD_ESP32_8048S043C) && RTYPE_S3_LAYER_DEBUG == 2
+    draw_tile_layer(video, fb, video->tiles0, video->tiles0_size, video->vram0, 256u,
+                    video->scrollx[0], video->scrolly[0], false);
+#elif defined(RTYPE_BOARD_ESP32_8048S043C) && RTYPE_S3_LAYER_DEBUG == 3
+    draw_sprites(video, fb);
+#elif defined(RTYPE_BOARD_ESP32_8048S043C)
+    draw_m72_mame_tile_layers(video, fb);
+    draw_sprites(video, fb);
+#else
     draw_tile_layer(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
                     video->scrollx[1], video->scrolly[1], false);
     draw_tile_layer(video, fb, video->tiles0, video->tiles0_size, video->vram0, 256u,
                     video->scrollx[0], video->scrolly[0], true);
     draw_sprites(video, fb);
+#endif
 }
