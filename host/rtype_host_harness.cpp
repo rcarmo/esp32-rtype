@@ -408,6 +408,10 @@ struct M72 {
             unsigned w = 1u << ((attr >> 14) & 3u);
             unsigned h = 1u << ((attr >> 12) & 3u);
             sy -= int(16u * h);
+            int sprite_x0 = sx - 64;
+            int sprite_x1 = sprite_x0 + int(16u * w);
+            int sprite_y1 = sy + int(16u * h);
+            if (sprite_x1 <= 0 || sprite_x0 >= FB_W || sprite_y1 <= 0 || sy >= FB_H) continue;
             for (unsigned x = 0; x < w; x++) {
                 for (unsigned y = 0; y < h; y++) {
                     unsigned c = code;

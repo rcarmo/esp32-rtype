@@ -476,6 +476,10 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
         unsigned w = 1u << ((attr >> 14) & 3u);
         unsigned h = 1u << ((attr >> 12) & 3u);
         sy -= (int)(16u * h);
+        int sprite_x0 = sx - 64;
+        int sprite_x1 = sprite_x0 + (int)(16u * w);
+        int sprite_y1 = sy + (int)(16u * h);
+        if (sprite_x1 <= 0 || sprite_x0 >= (int)RTYPE_GAME_W || sprite_y1 <= 0 || sy >= (int)RTYPE_GAME_H) continue;
         for (unsigned cy = 0; cy < h; cy++) {
             for (unsigned cx = 0; cx < w; cx++) {
                 unsigned c = code + (flipx ? 8u * (w - 1u - cx) : 8u * cx) + (flipy ? (h - 1u - cy) : cy);
