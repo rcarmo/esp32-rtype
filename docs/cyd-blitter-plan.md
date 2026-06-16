@@ -94,3 +94,11 @@ The hot loop then performs only indexed loads, pointer arithmetic, and packed RG
 - On ESP32-2432S028, allocation of a full `384x256xRGB565` source framebuffer fails because the board has no PSRAM and the largest heap block is too small.
 - `rtype_display_present_boot_pattern()` now generates the rotated/downsampled CYD columns directly into the SPI strip buffer, without a full source framebuffer.
 - This validates the board-specific no-PSRAM display architecture; the next step is replacing the procedural source with direct M72 tile/sprite strip rendering.
+
+## Hardware landscape CYD path
+
+- CYD now uses ILI9341 MADCTL hardware landscape so draw calls are logical `320x240`.
+- This is the fastest orientation: horizontal strips, no software-rotated column flushes.
+- Current diagnostic draws raw RGB565 color bars full-screen for the first few seconds, then switches to the no-framebuffer procedural pattern.
+- Camera confirmed full-screen hardware landscape fill on the plugged-in ESP32-2432S028.
+- If the physical module is flipped, adjust MADCTL mirror bits in `lib/lcd_cyd/lcd_cyd.c`; do not change the blitter.

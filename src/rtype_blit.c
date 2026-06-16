@@ -82,9 +82,82 @@ void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsi
     }
 }
 
+static inline uint16_t boot_pattern_pixel(unsigned sx, unsigned sy, unsigned frame_no);
+
+static uint16_t s_cyd_src_x_for_logical_x[RTYPE_BLIT_CYD_LOGICAL_W];
+static uint16_t s_cyd_src_y_for_logical_y[RTYPE_BLIT_CYD_LOGICAL_H];
+static uint8_t s_cyd_landscape_lut_ready;
+
 static uint16_t s_cyd_src_x_for_phys_y[RTYPE_BLIT_CYD_PHYS_H];
 static uint16_t s_cyd_src_y_for_phys_x[RTYPE_BLIT_CYD_PHYS_W];
 static uint8_t s_cyd_lut_ready;
+
+static void init_cyd_landscape_luts(void) {
+    if (s_cyd_landscape_lut_ready) return;
+    for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) {
+        unsigned src_x = (x * RTYPE_BLIT_SRC_W) / RTYPE_BLIT_CYD_VIEW_W;
+        if (src_x >= RTYPE_BLIT_SRC_W) src_x = RTYPE_BLIT_SRC_W - 1u;
+        s_cyd_src_x_for_logical_x[x] = (uint16_t)src_x;
+    }
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y++) {
+        if (y < RTYPE_BLIT_CYD_VIEW_Y || y >= RTYPE_BLIT_CYD_VIEW_Y + RTYPE_BLIT_CYD_VIEW_H) {
+            s_cyd_src_y_for_logical_y[y] = 0xffffu;
+        } else {
+            unsigned src_y = ((y - RTYPE_BLIT_CYD_VIEW_Y) * RTYPE_BLIT_SRC_H) / RTYPE_BLIT_CYD_VIEW_H;
+            if (src_y >= RTYPE_BLIT_SRC_H) src_y = RTYPE_BLIT_SRC_H - 1u;
+            s_cyd_src_y_for_logical_y[y] = (uint16_t)src_y;
+        }
+    }
+    s_cyd_landscape_lut_ready = 1;
+}
+
+void rtype_blit_cyd_landscape_scale_strip_320x213(const uint16_t *src, uint16_t *dst,
+                                                  unsigned logical_y, unsigned rows) {
+    if (src == NULL || dst == NULL || rows == 0 || logical_y >= RTYPE_BLIT_CYD_LOGICAL_H) return;
+    if (logical_y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - logical_y;
+    init_cyd_landscape_luts();
+
+    for (unsigned row = 0; row < rows; row++) {
+        const unsigned y = logical_y + row;
+        uint16_t *out = dst + (size_t)row * RTYPE_BLIT_CYD_LOGICAL_W;
+        const uint16_t sy = s_cyd_src_y_for_logical_y[y];
+        if (sy == 0xffffu) {
+            fill_row_rgb565(out, RTYPE_BLIT_CYD_LOGICAL_W, 0);
+            continue;
+        }
+        const uint16_t *src_row = src + (size_t)sy * RTYPE_BLIT_SRC_W;
+        unsigned x = 0;
+        for (; x + 1u < RTYPE_BLIT_CYD_LOGICAL_W; x += 2u) {
+            store2_rgb565(out + x, src_row[s_cyd_src_x_for_logical_x[x]],
+                          src_row[s_cyd_src_x_for_logical_x[x + 1u]]);
+        }
+        if (x < RTYPE_BLIT_CYD_LOGICAL_W) out[x] = src_row[s_cyd_src_x_for_logical_x[x]];
+    }
+}
+
+void rtype_blit_cyd_landscape_boot_pattern_strip_320x213(uint16_t *dst, unsigned logical_y,
+                                                         unsigned rows, unsigned frame_no) {
+    if (dst == NULL || rows == 0 || logical_y >= RTYPE_BLIT_CYD_LOGICAL_H) return;
+    if (logical_y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - logical_y;
+    init_cyd_landscape_luts();
+
+    for (unsigned row = 0; row < rows; row++) {
+        const unsigned y = logical_y + row;
+        uint16_t *out = dst + (size_t)row * RTYPE_BLIT_CYD_LOGICAL_W;
+        const uint16_t sy = s_cyd_src_y_for_logical_y[y];
+        if (sy == 0xffffu) {
+            fill_row_rgb565(out, RTYPE_BLIT_CYD_LOGICAL_W, 0);
+            continue;
+        }
+        unsigned x = 0;
+        for (; x + 1u < RTYPE_BLIT_CYD_LOGICAL_W; x += 2u) {
+            store2_rgb565(out + x,
+                          boot_pattern_pixel(s_cyd_src_x_for_logical_x[x], sy, frame_no),
+                          boot_pattern_pixel(s_cyd_src_x_for_logical_x[x + 1u], sy, frame_no));
+        }
+        if (x < RTYPE_BLIT_CYD_LOGICAL_W) out[x] = boot_pattern_pixel(s_cyd_src_x_for_logical_x[x], sy, frame_no);
+    }
+}
 
 static void init_cyd_rotated_luts(void) {
     if (s_cyd_lut_ready) return;

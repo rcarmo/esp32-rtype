@@ -21,40 +21,39 @@ typedef struct {
 
 static bool s_ready;
 static uint16_t *s_strip;
-static unsigned s_strip_cols;
+static unsigned s_strip_rows;
 static QueueHandle_t s_display_queue;
 static TaskHandle_t s_display_task;
 static uint32_t s_present_sequence;
 static volatile uint32_t s_displayed_sequence;
 static volatile uint32_t s_dropped_jobs;
 
-static void clear_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-    if (w == 0 || h == 0 || s_strip == NULL) return;
-    unsigned max_cols = s_strip_cols;
-    while (w > 0) {
-        unsigned cols = (w > max_cols) ? max_cols : w;
-        for (unsigned row = 0; row < h; row++) {
-            for (unsigned col = 0; col < cols; col++) s_strip[(size_t)row * cols + col] = 0;
+static void fill_strip(uint16_t color, unsigned rows) {
+    for (unsigned y = 0; y < rows; y++) {
+        for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) {
+            s_strip[(size_t)y * RTYPE_BLIT_CYD_LOGICAL_W + x] = color;
         }
-        lcd_draw_bitmap(x, y, cols, h, (const uint8_t *)s_strip);
-        x += cols;
-        w -= cols;
     }
 }
 
-static void rtype_display_clear_bars(void) {
-    clear_rect(0, 0, RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_PHYS_H);
-    clear_rect(RTYPE_BLIT_CYD_ACTIVE_X1, 0,
-               RTYPE_BLIT_CYD_PHYS_W - RTYPE_BLIT_CYD_ACTIVE_X1, RTYPE_BLIT_CYD_PHYS_H);
+static void clear_landscape_black(void) {
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
+        unsigned rows = s_strip_rows;
+        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
+        fill_strip(0, rows);
+        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
+                        (const uint8_t *)s_strip);
+    }
     lcd_wait_trans_complete();
 }
 
 static void rtype_display_flush_blocking(const uint16_t *framebuffer) {
-    for (unsigned x = RTYPE_BLIT_CYD_ACTIVE_X0; x < RTYPE_BLIT_CYD_ACTIVE_X1; x += s_strip_cols) {
-        unsigned cols = s_strip_cols;
-        if (x + cols > RTYPE_BLIT_CYD_ACTIVE_X1) cols = RTYPE_BLIT_CYD_ACTIVE_X1 - x;
-        rtype_blit_cyd_rotate_scale_columns_320x213(framebuffer, s_strip, x, cols);
-        lcd_draw_bitmap((uint16_t)x, 0, (uint16_t)cols, RTYPE_BLIT_CYD_PHYS_H, (const uint8_t *)s_strip);
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
+        unsigned rows = s_strip_rows;
+        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
+        rtype_blit_cyd_landscape_scale_strip_320x213(framebuffer, s_strip, y, rows);
+        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
+                        (const uint8_t *)s_strip);
     }
     lcd_wait_trans_complete();
 }
@@ -79,24 +78,24 @@ static void rtype_display_task(void *arg) {
 esp_err_t rtype_display_init(void) {
     if (s_ready) return ESP_OK;
     ESP_LOGI(TAG,
-             "initializing CYD ILI9341 SPI display: panel=%ux%u source=%ux%u rotated_view=%ux%u active_phys_x=%u..%u RGB565 async_core=0",
-             RTYPE_LCD_W, RTYPE_LCD_H, RTYPE_GAME_W, RTYPE_GAME_H,
-             RTYPE_BLIT_CYD_VIEW_W, RTYPE_BLIT_CYD_VIEW_H,
-             RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_ACTIVE_X1 - 1u);
+             "initializing CYD ILI9341 SPI display: hardware_landscape=%ux%u source=%ux%u viewport=%ux%u+y%u RGB565 async_core=0",
+             RTYPE_BLIT_CYD_LOGICAL_W, RTYPE_BLIT_CYD_LOGICAL_H, RTYPE_GAME_W, RTYPE_GAME_H,
+             RTYPE_BLIT_CYD_VIEW_W, RTYPE_BLIT_CYD_VIEW_H, RTYPE_BLIT_CYD_VIEW_Y);
     lcd_cyd_init();
-    s_strip_cols = 8;
-    s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
+
+    s_strip_rows = 8;
+    s_strip = (uint16_t *)heap_caps_malloc((size_t)RTYPE_BLIT_CYD_LOGICAL_W * s_strip_rows * sizeof(uint16_t),
                                            MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (s_strip == NULL) {
-        s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
+        s_strip = (uint16_t *)heap_caps_malloc((size_t)RTYPE_BLIT_CYD_LOGICAL_W * s_strip_rows * sizeof(uint16_t),
                                                MALLOC_CAP_8BIT);
     }
     if (s_strip == NULL) {
-        ESP_LOGE(TAG, "failed to allocate CYD RGB565 column strip buffer");
+        ESP_LOGE(TAG, "failed to allocate CYD RGB565 landscape strip buffer");
         return ESP_ERR_NO_MEM;
     }
 
-    rtype_display_clear_bars();
+    clear_landscape_black();
 
     s_display_queue = xQueueCreate(2, sizeof(rtype_display_job_t));
     if (s_display_queue == NULL) {
@@ -120,12 +119,36 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
     return rtype_display_init();
 }
 
+static void rtype_display_flush_raw_color_diag(void) {
+    static const uint16_t colors[] = {0x0000, 0xf800, 0x07e0, 0x001f, 0xffff};
+    const unsigned band_w = RTYPE_BLIT_CYD_LOGICAL_W / (sizeof(colors) / sizeof(colors[0]));
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
+        unsigned rows = s_strip_rows;
+        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
+        for (unsigned row = 0; row < rows; row++) {
+            for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) {
+                unsigned band = x / band_w;
+                if (band >= sizeof(colors) / sizeof(colors[0])) band = (sizeof(colors) / sizeof(colors[0])) - 1;
+                s_strip[(size_t)row * RTYPE_BLIT_CYD_LOGICAL_W + x] = colors[band];
+            }
+        }
+        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
+                        (const uint8_t *)s_strip);
+    }
+    lcd_wait_trans_complete();
+}
+
 static void rtype_display_flush_boot_pattern_blocking(unsigned frame_no) {
-    for (unsigned x = RTYPE_BLIT_CYD_ACTIVE_X0; x < RTYPE_BLIT_CYD_ACTIVE_X1; x += s_strip_cols) {
-        unsigned cols = s_strip_cols;
-        if (x + cols > RTYPE_BLIT_CYD_ACTIVE_X1) cols = RTYPE_BLIT_CYD_ACTIVE_X1 - x;
-        rtype_blit_cyd_rotate_boot_pattern_columns_320x213(s_strip, x, cols, frame_no);
-        lcd_draw_bitmap((uint16_t)x, 0, (uint16_t)cols, RTYPE_BLIT_CYD_PHYS_H, (const uint8_t *)s_strip);
+    if (frame_no < 120u) {
+        rtype_display_flush_raw_color_diag();
+        return;
+    }
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
+        unsigned rows = s_strip_rows;
+        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
+        rtype_blit_cyd_landscape_boot_pattern_strip_320x213(s_strip, y, rows, frame_no);
+        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
+                        (const uint8_t *)s_strip);
     }
     lcd_wait_trans_complete();
 }
@@ -142,8 +165,9 @@ esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned wid
     esp_err_t err = rtype_display_init();
     if (err != ESP_OK) return err;
 
-    // Rotated CYD fill path: logical 320x240 landscape, aspect-correct 320x213
-    // game viewport, flushed as physical portrait columns to the ILI9341.
+    // Fast CYD path: ILI9341 hardware landscape, horizontal strips, aspect-
+    // correct 320x213 viewport with bars. If the panel is physically flipped,
+    // change MADCTL mirror bits in lcd_cyd.c; keep this blitter unchanged.
     if (s_display_task != NULL && s_display_queue != NULL) {
         rtype_display_job_t job = {
             .framebuffer = framebuffer,

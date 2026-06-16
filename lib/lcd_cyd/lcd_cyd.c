@@ -45,8 +45,12 @@ static const ili9341_lcd_init_cmd_t lcd_init_cmds[] = {
                  0x0F},
      15,                                                 0},
     {0xB6, (uint8_t[]){0x08, 0x82, 0x27},             3, 0},
-    {0x36, (uint8_t[]){0x08}, 1, 0}, // MADCTL: BGR (portrait, no mirror)
-    {0x21, NULL,                                      0, 0},
+    // MADCTL: BGR + MV. Use ILI9341 landscape address mode for R-Type so
+    // draw_bitmap coordinates are logical 320x240 and the blitter can emit
+    // horizontal strips instead of expensive software-rotated columns.
+    {0x36, (uint8_t[]){0x28}, 1, 0},
+    // Color emulator path: keep display inversion off so RGB565 0x0000 is black.
+    {0x20, NULL,                                      0, 0},
 };
 #endif
 
