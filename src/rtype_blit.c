@@ -1,4 +1,5 @@
 #include "rtype_blit.h"
+#include "rtype_board.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -8,7 +9,13 @@
 #endif
 
 uint16_t rtype_blit_rgb565_identity(uint16_t rgb565) {
+#if defined(RTYPE_BOARD_ESP32_2432S028)
+    // CYD ILI9341 SPI path: keep logical RGB565 channel order, but transmit
+    // 16-bit pixels MSB-first by byte-swapping the little-endian uint16_t.
+    return (uint16_t)((rgb565 << 8) | (rgb565 >> 8));
+#else
     return rgb565;
+#endif
 }
 
 static inline uint32_t pack2_rgb565(uint16_t a, uint16_t b) {
@@ -52,9 +59,9 @@ void rtype_blit_cyd_fill_border_strip(uint16_t *dst, unsigned dst_y, unsigned ro
 static inline void scale_5_from_8(uint16_t *out, const uint16_t *in) {
     // 8 source pixels -> 5 destination pixels for exact 384->240 5/8 scaling.
     // dst source indices: 0,1,3,4,6. Unrolled to avoid divides in the hot loop.
-    out[0] = in[0];
-    store2_rgb565(out + 1, in[1], in[3]);
-    store2_rgb565(out + 3, in[4], in[6]);
+    out[0] = rtype_blit_rgb565_identity(in[0]);
+    store2_rgb565(out + 1, rtype_blit_rgb565_identity(in[1]), rtype_blit_rgb565_identity(in[3]));
+    store2_rgb565(out + 3, rtype_blit_rgb565_identity(in[4]), rtype_blit_rgb565_identity(in[6]));
 }
 
 void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsigned dst_y, unsigned rows) {
@@ -128,10 +135,10 @@ void rtype_blit_cyd_landscape_scale_strip_320x213(const uint16_t *src, uint16_t 
         const uint16_t *src_row = src + (size_t)sy * RTYPE_BLIT_SRC_W;
         unsigned x = 0;
         for (; x + 1u < RTYPE_BLIT_CYD_LOGICAL_W; x += 2u) {
-            store2_rgb565(out + x, src_row[s_cyd_src_x_for_logical_x[x]],
-                          src_row[s_cyd_src_x_for_logical_x[x + 1u]]);
+            store2_rgb565(out + x, rtype_blit_rgb565_identity(src_row[s_cyd_src_x_for_logical_x[x]]),
+                          rtype_blit_rgb565_identity(src_row[s_cyd_src_x_for_logical_x[x + 1u]]));
         }
-        if (x < RTYPE_BLIT_CYD_LOGICAL_W) out[x] = src_row[s_cyd_src_x_for_logical_x[x]];
+        if (x < RTYPE_BLIT_CYD_LOGICAL_W) out[x] = rtype_blit_rgb565_identity(src_row[s_cyd_src_x_for_logical_x[x]]);
     }
 }
 
@@ -213,18 +220,18 @@ void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *
 
         if (!all_active) {
             for (unsigned c = 0; c < cols; c++) {
-                out[c] = (sy[c] == 0xffffu) ? 0 : src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
+                out[c] = (sy[c] == 0xffffu) ? 0 : rtype_blit_rgb565_identity(src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx]);
             }
             continue;
         }
 
         unsigned c = 0;
         for (; c + 1u < cols; c += 2u) {
-            uint16_t a = src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
-            uint16_t b = src[(size_t)sy[c + 1u] * RTYPE_BLIT_SRC_W + sx];
+            uint16_t a = rtype_blit_rgb565_identity(src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx]);
+            uint16_t b = rtype_blit_rgb565_identity(src[(size_t)sy[c + 1u] * RTYPE_BLIT_SRC_W + sx]);
             store2_rgb565(out + c, a, b);
         }
-        if (c < cols) out[c] = src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
+        if (c < cols) out[c] = rtype_blit_rgb565_identity(src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx]);
     }
 }
 
@@ -235,9 +242,10 @@ static inline uint16_t boot_pattern_pixel(unsigned sx, unsigned sy, unsigned fra
     if (((sx / 16u) + (sy / 16u) + (frame_no / 15u)) & 1u) {
         b = (uint8_t)(255u - b);
     }
-    return (uint16_t)(((uint16_t)(r & 0xf8u) << 8) |
-                      ((uint16_t)(g & 0xfcu) << 3) |
-                      ((uint16_t)b >> 3));
+    uint16_t rgb565 = (uint16_t)(((uint16_t)(r & 0xf8u) << 8) |
+                                  ((uint16_t)(g & 0xfcu) << 3) |
+                                  ((uint16_t)b >> 3));
+    return rtype_blit_rgb565_identity(rgb565);
 }
 
 void rtype_blit_cyd_rotate_boot_pattern_columns_320x213(uint16_t *dst, unsigned phys_x,
