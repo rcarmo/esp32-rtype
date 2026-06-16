@@ -242,8 +242,21 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
     unsigned decoded_tile_codes = 0;
     const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
 #endif
+    int16_t base_x_by_tx[64];
+    uint8_t visible_tx[64];
+    for (unsigned tx = 0; tx < 64u; tx++) {
+        int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
+        while (base_x < -8) base_x += 512;
+        base_x_by_tx[tx] = (int16_t)base_x;
+        visible_tx[tx] = (base_x < (int)RTYPE_GAME_W) ? 1u : 0u;
+    }
     for (unsigned ty = 0; ty < 64u; ty++) {
+        int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
+        while (base_y < -8) base_y += 512;
+        if (base_y >= (int)RTYPE_GAME_H) continue;
         for (unsigned tx = 0; tx < 64u; tx++) {
+            if (!visible_tx[tx]) continue;
+            int base_x = base_x_by_tx[tx];
             const uint8_t *entry = vram + (ty * 64u + tx) * 4u;
             uint16_t raw_code = read16le(entry);
             uint16_t attr = read16le(entry + 2u);
@@ -251,11 +264,6 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
             unsigned color = attr & 0x0fu;
             bool flipx = (raw_code & 0x4000u) != 0;
             bool flipy = (raw_code & 0x8000u) != 0;
-            int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
-            int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
-            while (base_x < -8) base_x += 512;
-            while (base_y < -8) base_y += 512;
-            if (base_x >= (int)RTYPE_GAME_W || base_y >= (int)RTYPE_GAME_H) continue;
 
             const bool rom_ok = (region != NULL && region_size >= 4u && code * 8u < quarter);
             const unsigned tile_base = code * 8u;
@@ -335,8 +343,21 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
     unsigned decoded_tile_codes = 0;
     const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
 #endif
+    int16_t base_x_by_tx[64];
+    uint8_t visible_tx[64];
+    for (unsigned tx = 0; tx < 64u; tx++) {
+        int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
+        while (base_x < -8) base_x += 512;
+        base_x_by_tx[tx] = (int16_t)base_x;
+        visible_tx[tx] = (base_x < (int)RTYPE_GAME_W) ? 1u : 0u;
+    }
     for (unsigned ty = 0; ty < 64u; ty++) {
+        int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
+        while (base_y < -8) base_y += 512;
+        if (base_y >= (int)RTYPE_GAME_H) continue;
         for (unsigned tx = 0; tx < 64u; tx++) {
+            if (!visible_tx[tx]) continue;
+            int base_x = base_x_by_tx[tx];
             const uint8_t *entry = vram + (ty * 64u + tx) * 4u;
             uint16_t raw_code = read16le(entry);
             uint16_t attr = read16le(entry + 2u);
@@ -347,11 +368,6 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
             if (transmask == 0xffffu) continue;
             bool flipx = (raw_code & 0x4000u) != 0;
             bool flipy = (raw_code & 0x8000u) != 0;
-            int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
-            int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
-            while (base_x < -8) base_x += 512;
-            while (base_y < -8) base_y += 512;
-            if (base_x >= (int)RTYPE_GAME_W || base_y >= (int)RTYPE_GAME_H) continue;
 
             const bool rom_ok = (region != NULL && region_size >= 4u && code * 8u < quarter);
             const unsigned tile_base = code * 8u;
