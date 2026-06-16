@@ -140,8 +140,23 @@ struct M72 {
         init_palette();
     }
 
+    static uint32_t palette_byte_offset(uint32_t byte_off) {
+        uint32_t word_off = byte_off >> 1;
+        word_off &= ~0x100u; // A9 is not connected on M72 palette RAM
+        return (word_off << 1) | (byte_off & 1u);
+    }
+
+    static uint8_t palette_read_byte(const std::array<uint8_t, MEM_SIZE> &memory, uint32_t base, uint32_t byte_off) {
+        uint32_t off = palette_byte_offset(byte_off);
+        uint8_t v = memory[(base + off) & 0xfffff];
+        return (off & 1u) ? 0xffu : uint8_t(v | 0xe0u);
+    }
+
     uint8_t read8(uint32_t addr) const {
-        return mem[addr & 0xfffff];
+        addr &= 0xfffff;
+        if (addr >= 0xc8000 && addr <= 0xc8bff) return palette_read_byte(mem, 0xc8000, addr - 0xc8000);
+        if (addr >= 0xcc000 && addr <= 0xccbff) return palette_read_byte(mem, 0xcc000, addr - 0xcc000);
+        return mem[addr];
     }
 
     uint16_t read16(uint32_t addr) const {
@@ -164,11 +179,23 @@ struct M72 {
         addr &= 0xfffff;
         // ROM areas are read-only except RAM/VRAM/palette/sound RAM. Keep reset mirror intact.
         if ((addr <= 0x3ffff) || (addr >= 0xffff0)) return;
+        if (addr >= 0xc8000 && addr <= 0xc8bff) {
+            mem[0xc8000u + palette_byte_offset(addr - 0xc8000u)] = value;
+            mem_writes++;
+            writes_pal0++;
+            refresh_palette_group(0, addr);
+            return;
+        }
+        if (addr >= 0xcc000 && addr <= 0xccbff) {
+            mem[0xcc000u + palette_byte_offset(addr - 0xcc000u)] = value;
+            mem_writes++;
+            writes_pal1++;
+            refresh_palette_group(1, addr);
+            return;
+        }
         mem[addr] = value;
         mem_writes++;
         if (addr >= 0xc0000 && addr < 0xc0400) writes_spr++;
-        if (addr >= 0xc8000 && addr <= 0xc8bff) { writes_pal0++; refresh_palette_group(0, addr); }
-        if (addr >= 0xcc000 && addr <= 0xccbff) { writes_pal1++; refresh_palette_group(1, addr); }
         if (addr >= 0xd0000 && addr < 0xd4000) writes_vram0++;
         if (addr >= 0xd8000 && addr < 0xdc000) writes_vram1++;
     }
