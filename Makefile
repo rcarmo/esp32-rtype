@@ -21,7 +21,7 @@ S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
 ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash s3-storage-root s3-fatfs-image flash-s3-data monitor capture-s3-playfield compare-s3-host clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -39,6 +39,7 @@ help:
 	@echo "  make s3-fatfs-image           - build ignored 9MB S3 FAT ROM storage image"
 	@echo "  make flash-s3-data            - flash S3 maincpu + FAT ROM data partitions"
 	@echo "  make monitor                  - serial monitor"
+	@echo "  make smoke-s3                 - reset S3 and verify live ROM/display/playfield logs"
 	@echo "  make capture-s3-playfield     - capture camera frames when S3 reaches active playfield state"
 	@echo "  make compare-s3-host          - capture S3 and render exact host side-by-side comparison"
 
@@ -93,6 +94,9 @@ flash-s3-data: pack-rom s3-fatfs-image
 
 monitor:
 	$(PIO) device monitor -e $(PIO_ENV) --port $(SERIAL_PORT)
+
+smoke-s3:
+	/workspace/.venvs/pio/bin/python tools/smoke_s3.py --port $(SERIAL_PORT)
 
 capture-s3-playfield:
 	/workspace/.venvs/pio/bin/python tools/capture_s3_playfield.py --port $(SERIAL_PORT)
