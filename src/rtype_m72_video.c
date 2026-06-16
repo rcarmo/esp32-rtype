@@ -354,50 +354,6 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
         if (sy[c] == 0xffffu) all_active = 0;
     }
 
-#if defined(RTYPE_BOARD_ESP32_2432S028)
-    // Classic ESP32 CYD is render-bound. Sample one source pixel per 4x4
-    // physical block and duplicate it. The panel is small, and this cuts tile
-    // background work by roughly 16x; sprites are overlaid separately at 2x2.
-    for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py += 4u) {
-        const unsigned raw_x = (unsigned)s_cyd_src_x_for_phys_y[py] + 64u;
-        uint16_t *out0 = dst + (size_t)py * cols;
-        uint16_t *out1 = (py + 1u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 1u) * cols) : out0;
-        uint16_t *out2 = (py + 2u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 2u) * cols) : out0;
-        uint16_t *out3 = (py + 3u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 3u) * cols) : out0;
-        for (unsigned c = 0; c < cols; c += 4u) {
-            uint16_t packed_px = 0;
-            if (!video->video_off && sy[c] != 0xffffu) {
-                const unsigned raw_y = sy[c];
-                bool hit = false;
-                uint16_t px = 0;
-                if (use_layer0_as_bg) {
-                    px = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
-                                                 256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, false, &hit);
-                } else {
-                    px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
-                                                 256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
-                    bool fg_hit = false;
-                    uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
-                                                          256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
-                    if (fg_hit) px = fg;
-                }
-                if (have_sprites) {
-                    bool sp_hit = false;
-                    uint16_t sp = sample_sprite_pixel(video, raw_x, raw_y, &sp_hit);
-                    if (sp_hit) px = sp;
-                }
-                packed_px = rtype_blit_rgb565_identity(px);
-            }
-            for (unsigned dx = 0; dx < 4u && c + dx < cols; dx++) {
-                out0[c + dx] = packed_px;
-                out1[c + dx] = packed_px;
-                out2[c + dx] = packed_px;
-                out3[c + dx] = packed_px;
-            }
-        }
-    }
-    return;
-#endif
 
     for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
         uint16_t *out = dst + (size_t)py * cols;
