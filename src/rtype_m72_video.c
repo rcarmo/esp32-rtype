@@ -435,6 +435,18 @@ static void draw_m72_mame_tile_layers(const rtype_m72_video_t *video, uint16_t *
 }
 
 
+static unsigned collect_mame_sprite_offsets(const uint8_t *sprite_ram, uint16_t *offsets, unsigned max_offsets) {
+    if (sprite_ram == NULL || offsets == NULL || max_offsets == 0) return 0;
+    unsigned count = 0;
+    for (unsigned offs = 0; offs < RTYPE_M72_SPRITERAM_BYTES && count < max_offsets; ) {
+        offsets[count++] = (uint16_t)offs;
+        uint16_t attr = read16le(sprite_ram + offs + 4u);
+        unsigned w = 1u << ((attr >> 14) & 3u);
+        offs += w * 8u;
+    }
+    return count;
+}
+
 static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
     if (sprite_ram == NULL) return;
@@ -447,8 +459,10 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     unsigned decoded_sprite_codes = 0;
     const uint64_t *decoded_sprite_rows = s3_get_sprite_rows(video, &decoded_sprite_codes);
 #endif
-    for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0; offs -= 8) {
-        const uint8_t *s = sprite_ram + offs;
+    uint16_t sprite_offsets[RTYPE_M72_SPRITERAM_BYTES / 8u];
+    unsigned sprite_count = collect_mame_sprite_offsets(sprite_ram, sprite_offsets, sizeof(sprite_offsets) / sizeof(sprite_offsets[0]));
+    for (unsigned oi = sprite_count; oi > 0; oi--) {
+        const uint8_t *s = sprite_ram + sprite_offsets[oi - 1u];
         uint16_t syw = read16le(s + 0);
         uint16_t code = read16le(s + 2);
         uint16_t attr = read16le(s + 4);
@@ -582,54 +596,15 @@ typedef struct {
     bool flipy;
 } sprite_entry_t;
 
-static uint16_t sample_sprite_pixel(const rtype_m72_video_t *video, unsigned raw_x, unsigned raw_y, bool *hit) {
-    if (hit) *hit = false;
-    if (video == NULL) return 0;
-    const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
-    if (sprite_ram == NULL) return 0;
-    uint16_t out = 0;
-    for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0; offs -= 8) {
-        const uint8_t *s = sprite_ram + offs;
-        uint16_t syw = read16le(s + 0);
-        uint16_t code = read16le(s + 2);
-        uint16_t attr = read16le(s + 4);
-        uint16_t sxw = read16le(s + 6);
-        if ((syw | code | attr | sxw) == 0) continue;
-        int sx = -256 + (int)(sxw & 0x03ffu);
-        int sy = 384 - (int)(syw & 0x01ffu);
-        bool flipx = (attr & 0x0800u) != 0;
-        bool flipy = (attr & 0x0400u) != 0;
-        unsigned w = 1u << ((attr >> 14) & 3u);
-        unsigned h = 1u << ((attr >> 12) & 3u);
-        sy -= (int)(16u * h);
-        if ((int)raw_x < sx || (int)raw_y < sy || (int)raw_x >= sx + (int)(16u * w) ||
-            (int)raw_y >= sy + (int)(16u * h)) {
-            continue;
-        }
-        unsigned cell_x = (unsigned)((int)raw_x - sx) >> 4;
-        unsigned cell_y = (unsigned)((int)raw_y - sy) >> 4;
-        unsigned px = (unsigned)((int)raw_x - sx) & 15u;
-        unsigned py = (unsigned)((int)raw_y - sy) & 15u;
-        unsigned c = code + (flipx ? 8u * (w - 1u - cell_x) : 8u * cell_x) +
-                     (flipy ? (h - 1u - cell_y) : cell_y);
-        unsigned rx = flipx ? (15u - px) : px;
-        unsigned ry = flipy ? (15u - py) : py;
-        uint8_t pen = decode_sprite_pixel(video, c, rx, ry);
-        if (pen == 0) continue;
-        unsigned pi = (attr & 0x0fu) * 16u + pen;
-        out = visible_color(video->palette[pi & 0x1ffu], pi, pen);
-        if (hit) *hit = true;
-    }
-    return out;
-}
-
 static unsigned collect_visible_sprite_entries(const rtype_m72_video_t *video, sprite_entry_t *entries, unsigned max_entries) {
     if (video == NULL || entries == NULL || max_entries == 0) return 0;
     const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
     if (sprite_ram == NULL) return 0;
     unsigned count = 0;
-    for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0 && count < max_entries; offs -= 8) {
-        const uint8_t *s = sprite_ram + offs;
+    uint16_t sprite_offsets[RTYPE_M72_SPRITERAM_BYTES / 8u];
+    unsigned sprite_count = collect_mame_sprite_offsets(sprite_ram, sprite_offsets, sizeof(sprite_offsets) / sizeof(sprite_offsets[0]));
+    for (unsigned oi = sprite_count; oi > 0 && count < max_entries; oi--) {
+        const uint8_t *s = sprite_ram + sprite_offsets[oi - 1u];
         uint16_t syw = read16le(s + 0);
         uint16_t code = read16le(s + 2);
         uint16_t attr = read16le(s + 4);
@@ -682,6 +657,8 @@ IRAM_ATTR static uint16_t sample_sprite_entries(const rtype_m72_video_t *video, 
 void rtype_m72_video_render_cyd_strip(const rtype_m72_video_t *video, uint16_t *dst,
                                       unsigned logical_y, unsigned rows) {
     if (video == NULL || dst == NULL) return;
+    static sprite_entry_t sprite_entries[RTYPE_M72_SPRITERAM_BYTES / 8u];
+    unsigned sprite_entry_count = collect_visible_sprite_entries(video, sprite_entries, sizeof(sprite_entries) / sizeof(sprite_entries[0]));
     for (unsigned row = 0; row < rows; row++) {
         unsigned y = logical_y + row;
         uint16_t *out = dst + (size_t)row * RTYPE_BLIT_CYD_LOGICAL_W;
@@ -704,9 +681,11 @@ void rtype_m72_video_render_cyd_strip(const rtype_m72_video_t *video, uint16_t *
             uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
                                                   256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
             if (fg_hit) px = fg;
-            bool sp_hit = false;
-            uint16_t sp = sample_sprite_pixel(video, raw_x, raw_y, &sp_hit);
-            if (sp_hit) px = sp;
+            if (sprite_entry_count != 0) {
+                bool sp_hit = false;
+                uint16_t sp = sample_sprite_entries(video, sprite_entries, sprite_entry_count, raw_x, raw_y, &sp_hit);
+                if (sp_hit) px = sp;
+            }
             out[x] = cyd_wire_rgb565(px);
         }
     }
@@ -928,8 +907,10 @@ void rtype_m72_video_render_cyd_composited_columns(const rtype_m72_video_t *vide
     render_cyd_columns_impl(video, dst, phys_x, cols, false);
     const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
     if (sprite_ram == NULL) return;
-    for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0; offs -= 8) {
-        overlay_sprite_to_cyd_columns(video, dst, phys_x, cols, sprite_ram + offs);
+    uint16_t sprite_offsets[RTYPE_M72_SPRITERAM_BYTES / 8u];
+    unsigned sprite_count = collect_mame_sprite_offsets(sprite_ram, sprite_offsets, sizeof(sprite_offsets) / sizeof(sprite_offsets[0]));
+    for (unsigned oi = sprite_count; oi > 0; oi--) {
+        overlay_sprite_to_cyd_columns(video, dst, phys_x, cols, sprite_ram + sprite_offsets[oi - 1u]);
     }
 }
 

@@ -384,8 +384,17 @@ struct M72 {
     }
 
     void draw_sprites() {
-        for (int offs = 0x400 - 8; offs >= 0; offs -= 8) {
+        std::array<unsigned, 0x400 / 8> spritelist{};
+        unsigned sprite_count = 0;
+        for (unsigned offs = 0; offs < sprite_buffer.size() && sprite_count < spritelist.size(); ) {
+            spritelist[sprite_count++] = offs;
             const uint8_t *sp = sprite_buffer.data() + offs;
+            uint16_t attr = (uint16_t)sp[4] | ((uint16_t)sp[5] << 8);
+            unsigned w = 1u << ((attr >> 14) & 3u);
+            offs += w * 8u;
+        }
+        for (unsigned oi = sprite_count; oi > 0; oi--) {
+            const uint8_t *sp = sprite_buffer.data() + spritelist[oi - 1u];
             uint16_t syw = (uint16_t)sp[0] | ((uint16_t)sp[1] << 8);
             uint16_t code = (uint16_t)sp[2] | ((uint16_t)sp[3] << 8);
             uint16_t attr = (uint16_t)sp[4] | ((uint16_t)sp[5] << 8);
