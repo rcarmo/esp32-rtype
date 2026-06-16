@@ -17,10 +17,7 @@ static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
     addr &= 0xfffffu;
     if (core->cpu_map != NULL) return core->cpu_map[addr];
     if (core->sparse_mode) {
-        if (core->rom_map != NULL) {
-            if (addr <= 0x3ffffu) return core->rom_map[addr];
-            if (addr >= 0xe0000u) return core->rom_map[0x20000u + (addr - 0xe0000u)];
-        }
+        if (core->rom_map != NULL && addr <= 0x3ffffu) return core->rom_map[addr];
         if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
         if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
         if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
@@ -28,6 +25,7 @@ static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
         if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
         if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
         if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE] : 0xff;
+        if (core->rom_map != NULL && addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
     }
     return 0xff;
 }

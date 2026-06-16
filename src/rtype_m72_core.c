@@ -64,9 +64,16 @@ esp_err_t rtype_m72_core_init(rtype_m72_core_t *core) {
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->palette1_ram, 0x0c00u, "m72-pal1"), TAG, "pal1 alloc");
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->vram0, RTYPE_M72_VRAM_BYTES, "m72-vram0"), TAG, "vram0 alloc");
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->vram1, RTYPE_M72_VRAM_BYTES, "m72-vram1"), TAG, "vram1 alloc");
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    // The S3 has enough PSRAM to keep the M72 sound/shared RAM mapped. Some
+    // main-CPU code touches 0xe0000..0xeffff; treating that range as the reset
+    // ROM mirror makes live state diverge from MAME/hardware.
+    ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->sound_ram, 0x10000u, "m72-sound"), TAG, "sound alloc");
+#else
     // Display-only CYD build does not emulate the sound CPU/RAM. Leave this
     // region unallocated to make room for a full-width LCD DMA buffer.
     core->sound_ram = NULL;
+#endif
     core->video.vram0 = core->vram0;
     core->video.vram1 = core->vram1;
     core->video.spriteram = core->sprite_ram;
@@ -145,10 +152,7 @@ esp_err_t rtype_m72_core_map_maincpu_partition(rtype_m72_core_t *core, const cha
 
 static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     addr &= 0xfffffu;
-    if (core->rom_map != NULL) {
-        if (addr <= 0x3ffffu) return core->rom_map[addr];
-        if (addr >= 0xe0000u) return core->rom_map[0x20000u + (addr - 0xe0000u)];
-    }
+    if (core->rom_map != NULL && addr <= 0x3ffffu) return core->rom_map[addr];
     if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
     if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
     if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
@@ -156,6 +160,7 @@ static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
     if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
     if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE] : 0xff;
+    if (core->rom_map != NULL && addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
     return 0xff;
 }
 
