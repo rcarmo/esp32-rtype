@@ -88,6 +88,7 @@ void app_main(void) {
             ESP_LOGI(TAG, "CYD CPU backend starting without full framebuffer");
         }
         uint64_t next_vblank = 120000;
+        const uint64_t wait_skip_window = 80000; // preserve dispatcher work; skip only the final wait tail
         int64_t next_vblank_us = esp_timer_get_time();
         const int64_t frame_period_us = 16667; // pace vblank to real time; skip idle instructions, not game time
         bool main_loop_seen = false;
@@ -120,9 +121,10 @@ void app_main(void) {
                         }
                     }
                     bool idle_queue_empty_tail = (cpu.s[RTYPE_I86_CS] == 0x0040 && cpu.ip == 0x00ddu && cpu.zf);
+                    bool late_wait_tail = idle_queue_empty_tail && cpu.insn + wait_skip_window >= next_vblank;
                     if (main_loop_seen && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0 &&
-                        (idle_queue_empty_tail || (in_main_loop && cpu.insn >= next_vblank))) {
-                        if (idle_queue_empty_tail && cpu.insn < next_vblank) cpu.insn = next_vblank;
+                        (late_wait_tail || (in_main_loop && cpu.insn >= next_vblank))) {
+                        if (late_wait_tail && cpu.insn < next_vblank) cpu.insn = next_vblank;
                         int64_t now_us = esp_timer_get_time();
                         if (now_us >= next_vblank_us) {
                             rtype_i86_interrupt(&cpu, 0x20);
