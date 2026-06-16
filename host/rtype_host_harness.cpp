@@ -19,6 +19,8 @@ namespace {
 constexpr uint32_t MEM_SIZE = 0x100000;
 constexpr int FB_W = 384;
 constexpr int FB_H = 256;
+constexpr int M72_VISIBLE_RAW_X0 = 64;
+constexpr int M72_VISIBLE_RAW_X1 = 448;
 
 enum Reg16 { AX, CX, DX, BX, SP, BP, SI, DI };
 enum Seg { ES, CS, SS, DS };
@@ -294,7 +296,7 @@ struct M72 {
         }
         // M72 raw screen is 512 pixels wide, with visible X range 64..447.
         // Convert raw hardware X into our 384-wide framebuffer coordinate.
-        x -= 64;
+        x -= M72_VISIBLE_RAW_X0;
         if (x >= 0 && x < FB_W && y >= 0 && y < FB_H) {
             framebuffer[size_t(y) * FB_W + x] = color;
             if (color != 0) {
@@ -323,6 +325,7 @@ struct M72 {
                 int base_y = int(ty * 8u) - int(sy_scroll & 0x1ffu) - 128;
                 while (base_x < -8) base_x += 512;
                 while (base_y < -8) base_y += 512;
+                if (base_x >= M72_VISIBLE_RAW_X1 || base_x + 8 <= M72_VISIBLE_RAW_X0 || base_y >= FB_H || base_y + 8 <= 0) continue;
                 for (unsigned py = 0; py < 8; py++) {
                     for (unsigned px = 0; px < 8; px++) {
                         unsigned rx = flipx ? (7 - px) : px;
@@ -356,6 +359,7 @@ struct M72 {
                 int base_y = int(ty * 8u) - int(sy_scroll & 0x1ffu) - 128;
                 while (base_x < -8) base_x += 512;
                 while (base_y < -8) base_y += 512;
+                if (base_x >= M72_VISIBLE_RAW_X1 || base_x + 8 <= M72_VISIBLE_RAW_X0 || base_y >= FB_H || base_y + 8 <= 0) continue;
                 for (unsigned py = 0; py < 8; py++) {
                     for (unsigned px = 0; px < 8; px++) {
                         unsigned rx = flipx ? (7 - px) : px;

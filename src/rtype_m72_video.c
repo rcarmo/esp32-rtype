@@ -220,10 +220,13 @@ IRAM_ATTR static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, uns
     return pix;
 }
 
+#define M72_VISIBLE_RAW_X0 64
+#define M72_VISIBLE_RAW_X1 448
+
 static void put_pixel(uint16_t *fb, int x, int y, uint16_t c) {
     // M72 raw screen is 512 pixels wide with visible X range 64..447.
     // Convert raw hardware X into the 384-wide output framebuffer.
-    x -= 64;
+    x -= M72_VISIBLE_RAW_X0;
     if (x >= 0 && x < (int)RTYPE_GAME_W && y >= 0 && y < (int)RTYPE_GAME_H) {
         fb[(size_t)y * RTYPE_GAME_W + x] = c;
     }
@@ -248,12 +251,12 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
         int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
         while (base_x < -8) base_x += 512;
         base_x_by_tx[tx] = (int16_t)base_x;
-        visible_tx[tx] = (base_x < (int)RTYPE_GAME_W) ? 1u : 0u;
+        visible_tx[tx] = (base_x < M72_VISIBLE_RAW_X1 && base_x + 8 > M72_VISIBLE_RAW_X0) ? 1u : 0u;
     }
     for (unsigned ty = 0; ty < 64u; ty++) {
         int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
         while (base_y < -8) base_y += 512;
-        if (base_y >= (int)RTYPE_GAME_H) continue;
+        if (base_y >= (int)RTYPE_GAME_H || base_y + 8 <= 0) continue;
         for (unsigned tx = 0; tx < 64u; tx++) {
             if (!visible_tx[tx]) continue;
             int base_x = base_x_by_tx[tx];
@@ -262,6 +265,7 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
             uint16_t attr = read16le(entry + 2u);
             unsigned code = raw_code & 0x3fffu;
             unsigned color = attr & 0x0fu;
+            const uint16_t *pal = video->palette + palette_base + color * 16u;
             bool flipx = (raw_code & 0x4000u) != 0;
             bool flipy = (raw_code & 0x8000u) != 0;
 
@@ -320,8 +324,7 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
                         pen = fallback_tile_pixel(code, rx, ry);
                     }
                     if (transparent && pen == 0) continue;
-                    unsigned pi = palette_base + color * 16u + pen;
-                    dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                    dst[dst_x] = pal[pen];
                 }
             }
         }
@@ -349,12 +352,12 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
         int base_x = (int)(tx * 8u) - (int)(sx_scroll & 0x1ffu);
         while (base_x < -8) base_x += 512;
         base_x_by_tx[tx] = (int16_t)base_x;
-        visible_tx[tx] = (base_x < (int)RTYPE_GAME_W) ? 1u : 0u;
+        visible_tx[tx] = (base_x < M72_VISIBLE_RAW_X1 && base_x + 8 > M72_VISIBLE_RAW_X0) ? 1u : 0u;
     }
     for (unsigned ty = 0; ty < 64u; ty++) {
         int base_y = (int)(ty * 8u) - (int)(sy_scroll & 0x1ffu) - 128;
         while (base_y < -8) base_y += 512;
-        if (base_y >= (int)RTYPE_GAME_H) continue;
+        if (base_y >= (int)RTYPE_GAME_H || base_y + 8 <= 0) continue;
         for (unsigned tx = 0; tx < 64u; tx++) {
             if (!visible_tx[tx]) continue;
             int base_x = base_x_by_tx[tx];
@@ -363,6 +366,7 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
             uint16_t attr = read16le(entry + 2u);
             unsigned code = raw_code & 0x3fffu;
             unsigned color = attr & 0x0fu;
+            const uint16_t *pal = video->palette + palette_base + color * 16u;
             unsigned group = (attr >> 6) & 3u;
             uint16_t transmask = transmask_by_group[group];
             if (transmask == 0xffffu) continue;
@@ -424,8 +428,7 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
                         pen = fallback_tile_pixel(code, rx, ry);
                     }
                     if (transmask & (1u << pen)) continue;
-                    unsigned pi = palette_base + color * 16u + pen;
-                    dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                    dst[dst_x] = pal[pen];
                 }
             }
         }
@@ -485,6 +488,7 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
         uint16_t sxw = read16le(s + 6);
         if ((syw | code | attr | sxw) == 0) continue;
         unsigned color = attr & 0x0fu;
+        const uint16_t *pal = video->palette + color * 16u;
         int sx = -256 + (int)(sxw & 0x03ffu);
         int sy = 384 - (int)(syw & 0x01ffu);
         bool flipx = (attr & 0x0800u) != 0;
@@ -562,8 +566,7 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
                             pen = fallback_sprite_pixel(c, rx, ry);
                         }
                         if (pen == 0) continue;
-                        unsigned pi = color * 16u + pen;
-                        dst[dst_x] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
+                        dst[dst_x] = pal[pen];
                     }
                 }
             }

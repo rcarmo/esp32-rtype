@@ -37,16 +37,22 @@ static volatile uint32_t s_dropped_jobs;
 #define S3_VIEW_X ((RTYPE_LCD_W - S3_VIEW_W) / 2u)
 #define S3_VIEW_Y 0u
 
-static uint16_t s_x_lut[S3_VIEW_W];
+static uint16_t s_x_run_begin[RTYPE_GAME_W];
+static uint16_t s_x_run_end[RTYPE_GAME_W];
 static uint16_t s_y_lut[S3_VIEW_H];
 static bool s_luts_ready;
 
 static void init_scale_luts(void) {
     if (s_luts_ready) return;
+    for (unsigned sx = 0; sx < RTYPE_GAME_W; sx++) {
+        s_x_run_begin[sx] = 0xffffu;
+        s_x_run_end[sx] = 0;
+    }
     for (unsigned x = 0; x < S3_VIEW_W; x++) {
         unsigned sx = (x * RTYPE_GAME_W) / S3_VIEW_W;
         if (sx >= RTYPE_GAME_W) sx = RTYPE_GAME_W - 1u;
-        s_x_lut[x] = (uint16_t)sx;
+        if (s_x_run_begin[sx] == 0xffffu) s_x_run_begin[sx] = (uint16_t)x;
+        s_x_run_end[sx] = (uint16_t)(x + 1u);
     }
     for (unsigned y = 0; y < S3_VIEW_H; y++) {
         unsigned sy = (y * RTYPE_GAME_H) / S3_VIEW_H;
@@ -62,8 +68,12 @@ static void blit_game_to_panel(const uint16_t *src) {
     for (unsigned y = 0; y < S3_VIEW_H; y++) {
         const uint16_t *src_row = src + (size_t)s_y_lut[y] * RTYPE_GAME_W;
         uint16_t *dst = s_rgb_fb + (size_t)(S3_VIEW_Y + y) * RTYPE_LCD_W + S3_VIEW_X;
-        for (unsigned x = 0; x < S3_VIEW_W; x++) {
-            dst[x] = src_row[s_x_lut[x]];
+        for (unsigned sx = 0; sx < RTYPE_GAME_W; sx++) {
+            uint16_t begin = s_x_run_begin[sx];
+            uint16_t end = s_x_run_end[sx];
+            if (begin == 0xffffu) continue;
+            uint16_t px = src_row[sx];
+            for (unsigned x = begin; x < end; x++) dst[x] = px;
         }
     }
 }
