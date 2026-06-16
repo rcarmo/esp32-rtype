@@ -107,3 +107,103 @@ Explicitly deferred:
 - CYD display updates now run through a FreeRTOS worker pinned to core 0.
 - The worker performs the 5/8 RGB565 strip downsample and ILI9341 SPI flush; present calls queue the newest frame and drop stale queued frames if display bandwidth falls behind.
 - The producer uses double source framebuffers when allocation permits.
+
+## ESP32-S3 live-emulation status (current)
+
+The primary target is `esp32-s3-8048s043c-rtype` (`make build-s3`). It now runs the live R-Type/M72 V30 path on the ESP32-S3 replacement board and renders the active playfield on the 800x480 RGB panel.
+
+Current S3 architecture:
+
+- Board/profile: `RTYPE_BOARD_ESP32_8048S043C` / Sunton ESP32-8048S043C.
+- Display: 800x480 RGB panel, proportional output only.
+- Game framebuffer: 384x256 RGB565.
+- Panel mapping: aspect-preserving `720x480+40,0`; black side bars.
+- ROM filesystem: `/spiflash/rtype` FAT storage partition for graphics ROM files.
+- Main CPU ROM map: dedicated `maincpu` data partition at `0x410000`, size `1MB`.
+- FAT storage partition: `storage` at `0x510000`, size `9MB`.
+- Main CPU opcode fetches are flash-mapped from the `maincpu` partition via `rtype_m72_core_map_maincpu_partition(&core, "maincpu")`.
+- S3 sparse RAM regions live in PSRAM, including work RAM, sprite RAM, palette RAM, VRAM0/1, and the M72 sound/shared RAM window.
+
+Important S3 fidelity fixes already applied:
+
+- `5a19aee` maps M72 sound/shared RAM (`0xe0000..0xeffff`) on S3 and avoids treating ordinary data reads there as the reset ROM mirror.
+- `b481f30` mirrors palette RAM address bit A9 and returns disconnected palette read bits high, matching MAME (`paletteram[offset] | 0xffe0`).
+- `ec7e51f` switches the S3 tile compositor to MAME-style M72 tile group/priority masks instead of the old single opaque-BG + transparent-FG pass.
+- `aac1a76` and `79d7672` align the host reference harness with the same tile priority masks and palette RAM semantics.
+
+Current S3 performance/fidelity baseline:
+
+- Render pacing default: `render_irq=5`.
+- Typical active-playfield logs show ~40-59 IRQ/s depending on scene cost.
+- The S3 source framebuffer contains the same dominant green terrain RGB565 values as the host reference during active `root=0x0aa6` playfield states.
+- RGB panel color wiring has been verified separately with temporary red/green/blue bars; green displays correctly, so remaining visual differences in photos are not due to panel RGB order.
+
+## Exact host-vs-S3 comparison workflow
+
+Use the reproducible comparison target instead of arbitrary camera photos:
+
+```bash
+make compare-s3-host
+```
+
+This runs `tools/compare_s3_host.py`, which:
+
+1. runs `tools/capture_s3_playfield.py`,
+2. waits for S3 serial `S3 PERF` lines with `root=0x0aa6`,
+3. captures a camera frame once the frame counter passes the configured threshold,
+4. runs the host harness to the exact same `frame/root` state using `--target-frame` and `--target-root`,
+5. generates a side-by-side image under `artifacts/compare/`.
+
+The most recent exact matched comparison used:
+
+- S3: `frame=0x07c4`, `root=0x0aa6`, `scroll=(486,0)/(461,0)`.
+- Host: `frame_counter=0x07c4`, `root_state=0x0aa6`, `scroll=(486,0)/(461,0)`.
+
+Generated artifact example:
+
+```text
+artifacts/compare/host-vs-s3-f07c4-r0aa6.jpg
+```
+
+For just device-side captures at active playfield states:
+
+```bash
+make capture-s3-playfield
+```
+
+The capture script writes images like:
+
+```text
+artifacts/camera/s3-root0aa6-0-f07c4-s486-461.jpg
+```
+
+Use exact matched comparisons for fidelity decisions. Arbitrary photos often land on title/ranking/dark playfield moments and can falsely suggest missing backgrounds.
+
+## S3 flashing notes
+
+Normal firmware flash:
+
+```bash
+make flash PIO_ENV=esp32-s3-8048s043c-rtype SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+```
+
+Data partitions must also be present after partition-layout changes or a full erase:
+
+```bash
+/workspace/.venvs/pio/bin/python -m esptool \
+  --chip esp32s3 \
+  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --baud 460800 \
+  write-flash \
+  0x410000 artifacts/packed-rtype/maincpu-map.bin \
+  0x510000 artifacts/s3-rtype-fatfs-wl-9m.bin
+```
+
+`artifacts/s3-rtype-fatfs-wl-9m.bin` is a generated 9MB wear-levelled FAT image containing `/rtype/*.bin` and is intentionally ignored.
+
+## Current caveats
+
+- The S3 path is live and renders the active playfield, but it is still a constrained ESP32-S3 port, not a full MAME implementation.
+- Audio, real input, and general M72 compatibility remain out of scope.
+- Do not reintroduce static/prebaked frames, coarse renderers, direct sprite-overlay shortcuts, or synthetic palette fallbacks.
+- Use MAME references for renderer changes; keep host harness and firmware renderer semantics aligned.
