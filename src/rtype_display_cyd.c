@@ -290,11 +290,13 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
 static esp_err_t rtype_display_flush_m72_video_blocking(const rtype_m72_video_t *video) {
     if (video == NULL) return ESP_ERR_INVALID_ARG;
     uint32_t checksum = 0;
-    draw_columns(video, 0, RTYPE_BLIT_CYD_PHYS_W, true, &checksum);
+    const unsigned active_x0 = RTYPE_BLIT_CYD_ACTIVE_X0 & ~1u;
+    const unsigned active_x1 = (RTYPE_BLIT_CYD_ACTIVE_X1 + 1u) & ~1u;
+    draw_columns(video, active_x0, active_x1, true, &checksum);
 
     if ((s_live_present_count++ & 0x1fu) == 0) {
         ESP_LOGI(TAG, "CYD live snapshot updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u dropped=%" PRIu32,
-                 RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
+                 active_x1 - active_x0, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
     }
     return ESP_OK;
 }
