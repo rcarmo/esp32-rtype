@@ -2,6 +2,7 @@
 #include "rtype_blit.h"
 #include "rtype_board.h"
 
+#include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -12,6 +13,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 static const char *TAG = "rtype_display_cyd";
 
@@ -22,7 +24,7 @@ typedef enum {
 
 typedef struct {
     const uint16_t *framebuffer;
-    rtype_m72_core_t *core;
+    const rtype_m72_video_t *video;
     rtype_display_job_kind_t kind;
     uint32_t sequence;
 } rtype_display_job_t;
@@ -31,6 +33,13 @@ typedef struct {
     uint16_t x0;
     uint16_t x1;
 } column_range_t;
+
+typedef struct {
+    rtype_m72_video_t video;
+    uint8_t *vram0;
+    uint8_t *vram1;
+    bool ready;
+} rtype_video_snapshot_t;
 
 static bool s_ready;
 static uint16_t *s_strip;
@@ -41,6 +50,7 @@ static uint32_t s_present_sequence;
 static volatile uint32_t s_displayed_sequence;
 static volatile uint32_t s_dropped_jobs;
 static uint32_t s_live_present_count;
+static rtype_video_snapshot_t s_snapshot;
 static column_range_t s_prev_sprite_ranges[RTYPE_M72_SPRITERAM_BYTES / 8u];
 static unsigned s_prev_sprite_range_count;
 
@@ -75,7 +85,7 @@ static void rtype_display_flush_blocking(const uint16_t *framebuffer) {
     }
 }
 
-static esp_err_t rtype_display_flush_m72_core_blocking(rtype_m72_core_t *core);
+static esp_err_t rtype_display_flush_m72_video_blocking(const rtype_m72_video_t *video);
 
 static void rtype_display_task(void *arg) {
     (void)arg;
@@ -89,7 +99,7 @@ static void rtype_display_task(void *arg) {
                 s_dropped_jobs++;
             }
             if (job.kind == RTYPE_DISPLAY_JOB_M72_CORE) {
-                (void)rtype_display_flush_m72_core_blocking(job.core);
+                (void)rtype_display_flush_m72_video_blocking(job.video);
             } else {
                 rtype_display_flush_blocking(job.framebuffer);
             }
@@ -196,6 +206,37 @@ static unsigned collect_sprite_column_ranges(const rtype_m72_video_t *video, col
     return count;
 }
 
+static esp_err_t ensure_video_snapshot(void) {
+    if (s_snapshot.ready) return ESP_OK;
+    s_snapshot.vram0 = (uint8_t *)heap_caps_malloc(RTYPE_M72_VRAM_BYTES, MALLOC_CAP_8BIT);
+    s_snapshot.vram1 = (uint8_t *)heap_caps_malloc(RTYPE_M72_VRAM_BYTES, MALLOC_CAP_8BIT);
+    if (s_snapshot.vram0 == NULL || s_snapshot.vram1 == NULL) {
+        ESP_LOGE(TAG, "failed to allocate CYD video snapshot buffers");
+        return ESP_ERR_NO_MEM;
+    }
+    s_snapshot.ready = true;
+    ESP_LOGI(TAG, "CYD frame snapshot: %u bytes", (unsigned)(RTYPE_M72_VRAM_BYTES * 2u + RTYPE_M72_SPRITERAM_BYTES));
+    return ESP_OK;
+}
+
+static esp_err_t copy_video_snapshot(rtype_m72_core_t *core) {
+    if (core == NULL) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(ensure_video_snapshot(), TAG, "snapshot alloc");
+    s_snapshot.video = core->video;
+    if (core->video.vram0 != NULL) memcpy(s_snapshot.vram0, core->video.vram0, RTYPE_M72_VRAM_BYTES);
+    else memset(s_snapshot.vram0, 0, RTYPE_M72_VRAM_BYTES);
+    if (core->video.vram1 != NULL) memcpy(s_snapshot.vram1, core->video.vram1, RTYPE_M72_VRAM_BYTES);
+    else memset(s_snapshot.vram1, 0, RTYPE_M72_VRAM_BYTES);
+    const uint8_t *sprite_ram = core->video.sprite_buffer_valid ? core->video.sprite_buffer : core->video.spriteram;
+    if (sprite_ram != NULL) memcpy(s_snapshot.video.sprite_buffer, sprite_ram, RTYPE_M72_SPRITERAM_BYTES);
+    else memset(s_snapshot.video.sprite_buffer, 0, RTYPE_M72_SPRITERAM_BYTES);
+    s_snapshot.video.vram0 = s_snapshot.vram0;
+    s_snapshot.video.vram1 = s_snapshot.vram1;
+    s_snapshot.video.spriteram = s_snapshot.video.sprite_buffer;
+    s_snapshot.video.sprite_buffer_valid = 1;
+    return ESP_OK;
+}
+
 static unsigned sort_merge_ranges(column_range_t *ranges, unsigned count) {
     for (unsigned i = 1; i < count; i++) {
         column_range_t r = ranges[i];
@@ -246,13 +287,13 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
     }
 }
 
-static esp_err_t rtype_display_flush_m72_core_blocking(rtype_m72_core_t *core) {
-    if (core == NULL) return ESP_ERR_INVALID_ARG;
+static esp_err_t rtype_display_flush_m72_video_blocking(const rtype_m72_video_t *video) {
+    if (video == NULL) return ESP_ERR_INVALID_ARG;
     uint32_t checksum = 0;
-    draw_columns(&core->video, 0, RTYPE_BLIT_CYD_PHYS_W, true, &checksum);
+    draw_columns(video, 0, RTYPE_BLIT_CYD_PHYS_W, true, &checksum);
 
     if ((s_live_present_count++ & 0x1fu) == 0) {
-        ESP_LOGI(TAG, "CYD live single-pass updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u dropped=%" PRIu32,
+        ESP_LOGI(TAG, "CYD live snapshot updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u dropped=%" PRIu32,
                  RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
     }
     return ESP_OK;
@@ -263,21 +304,25 @@ esp_err_t rtype_display_present_m72_core(rtype_m72_core_t *core) {
     esp_err_t err = rtype_display_init();
     if (err != ESP_OK) return err;
     if (s_display_task != NULL && s_display_queue != NULL) {
+        if (s_present_sequence != s_displayed_sequence) {
+            s_dropped_jobs++;
+            return ESP_OK;
+        }
+        ESP_RETURN_ON_ERROR(copy_video_snapshot(core), TAG, "copy snapshot");
         rtype_display_job_t job = {
             .framebuffer = NULL,
-            .core = core,
+            .video = &s_snapshot.video,
             .kind = RTYPE_DISPLAY_JOB_M72_CORE,
             .sequence = ++s_present_sequence,
         };
         if (xQueueSend(s_display_queue, &job, 0) != pdTRUE) {
-            rtype_display_job_t dropped;
-            (void)xQueueReceive(s_display_queue, &dropped, 0);
             s_dropped_jobs++;
-            (void)xQueueSend(s_display_queue, &job, 0);
+            s_displayed_sequence = s_present_sequence;
         }
         return ESP_OK;
     }
-    return rtype_display_flush_m72_core_blocking(core);
+    ESP_RETURN_ON_ERROR(copy_video_snapshot(core), TAG, "copy snapshot");
+    return rtype_display_flush_m72_video_blocking(&s_snapshot.video);
 }
 
 esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned width, unsigned height) {
@@ -290,7 +335,7 @@ esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned wid
     if (s_display_task != NULL && s_display_queue != NULL) {
         rtype_display_job_t job = {
             .framebuffer = framebuffer,
-            .core = NULL,
+            .video = NULL,
             .kind = RTYPE_DISPLAY_JOB_FRAMEBUFFER,
             .sequence = ++s_present_sequence,
         };

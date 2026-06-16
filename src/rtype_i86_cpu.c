@@ -36,12 +36,47 @@ static inline uint16_t rw(rtype_i86_cpu_t *cpu, uint32_t addr) {
     return (uint16_t)(lo | (hi << 8));
 }
 
-static void wb(rtype_i86_cpu_t *cpu, uint32_t addr, uint8_t v) {
-    rtype_m72_core_write8(cpu->core, addr, v);
+static inline uint8_t *fast_write_ptr(rtype_i86_cpu_t *cpu, uint32_t addr) {
+    rtype_m72_core_t *core = cpu->core;
+    if (core == NULL) return NULL;
+    addr &= 0xfffffu;
+    if (addr <= 0x3ffffu || addr >= RTYPE_M72_RESET_VECTOR_BASE) return NULL;
+    if (core->cpu_map != NULL) return core->cpu_map + addr;
+    if (!core->sparse_mode) return NULL;
+    if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram + (addr - RTYPE_M72_WORK_RAM_BASE);
+    if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram + (addr - RTYPE_M72_SPRITE_RAM_BASE);
+    if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0 + (addr - RTYPE_M72_VRAM0_BASE);
+    if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1 + (addr - RTYPE_M72_VRAM1_BASE);
+    if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram + (addr - RTYPE_M72_SOUND_RAM_BASE);
+    return NULL;
 }
 
-static void ww(rtype_i86_cpu_t *cpu, uint32_t addr, uint16_t v) {
-    rtype_m72_core_write16(cpu->core, addr, v);
+static inline bool is_palette_addr(uint32_t addr) {
+    addr &= 0xfffffu;
+    return (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) ||
+           (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u);
+}
+
+static inline void wb(rtype_i86_cpu_t *cpu, uint32_t addr, uint8_t v) {
+    if (is_palette_addr(addr)) {
+        rtype_m72_core_write8(cpu->core, addr, v);
+        return;
+    }
+    uint8_t *p = fast_write_ptr(cpu, addr);
+    if (p != NULL) *p = v;
+}
+
+static inline void ww(rtype_i86_cpu_t *cpu, uint32_t addr, uint16_t v) {
+    if (is_palette_addr(addr) || is_palette_addr(addr + 1u)) {
+        rtype_m72_core_write16(cpu->core, addr, v);
+        return;
+    }
+    uint8_t *p0 = fast_write_ptr(cpu, addr);
+    uint8_t *p1 = fast_write_ptr(cpu, addr + 1u);
+    if (p0 != NULL && p1 != NULL) {
+        *p0 = (uint8_t)(v & 0xffu);
+        *p1 = (uint8_t)(v >> 8);
+    }
 }
 
 static inline uint8_t fetch8(rtype_i86_cpu_t *cpu) {
