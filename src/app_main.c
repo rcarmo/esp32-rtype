@@ -43,6 +43,34 @@ static esp_err_t mount_spiflash_storage(void) {
 }
 #endif
 
+typedef struct {
+    uint32_t nonzero;
+    unsigned min_x;
+    unsigned min_y;
+    unsigned max_x;
+    unsigned max_y;
+} fb_audit_t;
+
+static fb_audit_t audit_framebuffer(const uint16_t *fb) {
+    fb_audit_t a = { .nonzero = 0, .min_x = RTYPE_GAME_W, .min_y = RTYPE_GAME_H, .max_x = 0, .max_y = 0 };
+    if (fb == NULL) return a;
+    for (unsigned y = 0; y < RTYPE_GAME_H; y++) {
+        for (unsigned x = 0; x < RTYPE_GAME_W; x++) {
+            uint16_t px = fb[(size_t)y * RTYPE_GAME_W + x];
+            if (px == 0) continue;
+            a.nonzero++;
+            if (x < a.min_x) a.min_x = x;
+            if (y < a.min_y) a.min_y = y;
+            if (x > a.max_x) a.max_x = x;
+            if (y > a.max_y) a.max_y = y;
+        }
+    }
+    if (a.nonzero == 0) {
+        a.min_x = a.min_y = a.max_x = a.max_y = 0;
+    }
+    return a;
+}
+
 static uint32_t count_palette_nonzero(const rtype_m72_video_t *video, unsigned begin, unsigned end) {
     if (video == NULL) return 0;
     if (end > RTYPE_M72_PALETTE_COLORS) end = RTYPE_M72_PALETTE_COLORS;
@@ -97,12 +125,30 @@ void app_main(void) {
         }
 #elif defined(RTYPE_BOARD_ESP32_8048S043C)
         ESP_LOGI(TAG, "S3 full-framebuffer M72 core + V30 backend active");
-        (void)mount_spiflash_storage();
-        cpu_rom_err = rtype_rom_load_m72_maincpu("/spiflash/rtype", &core);
+        cpu_rom_err = rtype_m72_core_map_maincpu_partition(&core, "maincpu");
+        // The S3 maincpu partition contains only the 1MB V30 CPU map; graphics
+        // still come from the FAT ROM set below.
+        core.video.sprites = NULL;
+        core.video.sprites_size = 0;
+        core.video.tiles0 = NULL;
+        core.video.tiles0_size = 0;
+        core.video.tiles1 = NULL;
+        core.video.tiles1_size = 0;
         if (cpu_rom_err != ESP_OK) {
-            ESP_LOGW(TAG, "external main CPU ROMs not loaded (%s); S3 will use graphics-only fallback", esp_err_to_name(cpu_rom_err));
+            ESP_LOGW(TAG, "maincpu partition unavailable (%s); falling back to FAT-loaded main CPU ROMs", esp_err_to_name(cpu_rom_err));
+        }
+        (void)mount_spiflash_storage();
+        if (cpu_rom_err != ESP_OK) {
+            cpu_rom_err = rtype_rom_load_m72_maincpu("/spiflash/rtype", &core);
+            if (cpu_rom_err != ESP_OK) {
+                ESP_LOGW(TAG, "external main CPU ROMs not loaded (%s); S3 will use graphics-only fallback", esp_err_to_name(cpu_rom_err));
+            }
         }
         esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
+        ESP_LOGI(TAG, "S3 render stage ROMs: sprites=%p/%u tiles0=%p/%u tiles1=%p/%u",
+                 (const void *)core.video.sprites, (unsigned)core.video.sprites_size,
+                 (const void *)core.video.tiles0, (unsigned)core.video.tiles0_size,
+                 (const void *)core.video.tiles1, (unsigned)core.video.tiles1_size);
         if (rom_err != ESP_OK) {
             ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
         }
@@ -249,8 +295,15 @@ void app_main(void) {
     const int64_t full_frame_period_us = 16667;
     bool full_main_loop_seen = false;
     bool full_frame_vector_ready = false;
+    const uint64_t full_render_irq_interval = 8u;
     uint64_t full_last_presented_irq = 0;
     uint64_t full_last_perf_irq = 0;
+    uint64_t full_last_perf_insn = 0;
+    uint64_t full_prof_cpu_us = 0;
+    uint64_t full_prof_render_us = 0;
+    uint64_t full_prof_present_us = 0;
+    uint32_t full_prof_renders = 0;
+    fb_audit_t full_last_fb_audit = {0};
     int64_t full_last_perf_us = esp_timer_get_time();
     if (full_cpu_running) {
         rtype_i86_reset(&full_cpu, &core);
@@ -260,20 +313,20 @@ void app_main(void) {
 
     for (unsigned frame = 0;; frame++) {
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
-        bool full_present_due = false;
         if (full_cpu_running && !full_frame_vector_ready) {
             full_frame_vector_ready = (rtype_m72_core_read16(&core, 0x20u * 4u) == 0x00fe &&
                                        rtype_m72_core_read16(&core, 0x20u * 4u + 2u) == 0x0040);
         }
         if (full_cpu_running) {
+            int64_t full_cpu_begin_us = esp_timer_get_time();
             uint64_t target = full_cpu.insn + 1000000ull;
             while (!full_cpu.halted && full_cpu.insn < target) {
                 bool in_main_loop = (full_cpu.s[RTYPE_I86_CS] == 0x0040 && full_cpu.ip >= 0x00d0 && full_cpu.ip <= 0x00f8);
                 if (in_main_loop) {
                     full_main_loop_seen = true;
                     rtype_i86_complete_frame_if_idle(&full_cpu);
-                    if (full_cpu.interrupt_count > 0 && full_cpu.interrupt_count >= full_last_presented_irq + 16u) {
-                        full_present_due = true;
+                    if (full_cpu.interrupt_count > 0 &&
+                        full_cpu.interrupt_count >= full_last_presented_irq + (full_render_irq_interval * 4u)) {
                         break;
                     }
                 }
@@ -294,6 +347,7 @@ void app_main(void) {
                 }
                 rtype_i86_step(&full_cpu);
             }
+            full_prof_cpu_us += (uint64_t)(esp_timer_get_time() - full_cpu_begin_us);
             if (full_cpu.halted) {
                 ESP_LOGW(TAG, "S3 CPU halted pc=0x%05" PRIx32 " opcode=0x%02x reason=%s",
                          rtype_i86_pc(&full_cpu), full_cpu.last_opcode, full_cpu.stop_reason);
@@ -302,13 +356,34 @@ void app_main(void) {
             int64_t now_us = esp_timer_get_time();
             if (now_us - full_last_perf_us >= 5000000) {
                 uint64_t dirq = full_cpu.interrupt_count - full_last_perf_irq;
+                uint64_t dinsn = full_cpu.insn - full_last_perf_insn;
                 uint64_t dt_us = (uint64_t)(now_us - full_last_perf_us);
-                ESP_LOGI(TAG, "S3 PERF irq_s=%llu frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u)",
+                uint64_t avg_render_us = full_prof_renders ? (full_prof_render_us / full_prof_renders) : 0;
+                uint64_t avg_present_us = full_prof_renders ? (full_prof_present_us / full_prof_renders) : 0;
+                uint32_t audit_vram0 = rtype_m72_core_count_nonzero(&core, RTYPE_M72_VRAM0_BASE, RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES);
+                uint32_t audit_vram1 = rtype_m72_core_count_nonzero(&core, RTYPE_M72_VRAM1_BASE, RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES);
+                uint32_t audit_spr = rtype_m72_core_count_nonzero(&core, RTYPE_M72_SPRITE_RAM_BASE, RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES);
+                uint32_t audit_pal = count_palette_nonzero(&core.video, 0, RTYPE_M72_PALETTE_COLORS);
+                ESP_LOGI(TAG, "S3 PERF irq_s=%llu ips=%llu render_irq=%u cpu_us=%llu render_us=%llu/%u present_us=%llu/%u frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u) vram=%u/%u spr=%u pal=%u fb_nz=%u fb_box=%u,%u-%u,%u",
                          (unsigned long long)((dirq * 1000000ull) / dt_us),
+                         (unsigned long long)((dinsn * 1000000ull) / dt_us),
+                         (unsigned)full_render_irq_interval,
+                         (unsigned long long)full_prof_cpu_us,
+                         (unsigned long long)avg_render_us, (unsigned)full_prof_renders,
+                         (unsigned long long)avg_present_us, (unsigned)full_prof_renders,
                          (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
                          (unsigned)rtype_m72_core_read16(&core, 0x40000u),
                          (unsigned)core.video.scrollx[0], (unsigned)core.video.scrolly[0],
-                         (unsigned)core.video.scrollx[1], (unsigned)core.video.scrolly[1]);
+                         (unsigned)core.video.scrollx[1], (unsigned)core.video.scrolly[1],
+                         (unsigned)audit_vram0, (unsigned)audit_vram1, (unsigned)audit_spr, (unsigned)audit_pal,
+                         (unsigned)full_last_fb_audit.nonzero,
+                         (unsigned)full_last_fb_audit.min_x, (unsigned)full_last_fb_audit.min_y,
+                         (unsigned)full_last_fb_audit.max_x, (unsigned)full_last_fb_audit.max_y);
+                full_prof_cpu_us = 0;
+                full_prof_render_us = 0;
+                full_prof_present_us = 0;
+                full_prof_renders = 0;
+                full_last_perf_insn = full_cpu.insn;
                 full_last_perf_irq = full_cpu.interrupt_count;
                 full_last_perf_us = now_us;
             }
@@ -317,12 +392,17 @@ void app_main(void) {
         if (core_err == ESP_OK) {
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
             if (full_cpu_running) {
-                if (!full_present_due && full_cpu.interrupt_count == full_last_presented_irq) {
+                uint64_t pending_irqs = full_cpu.interrupt_count - full_last_presented_irq;
+                if (pending_irqs < full_render_irq_interval) {
                     vTaskDelay(pdMS_TO_TICKS(1));
                     continue;
                 }
                 full_last_presented_irq = full_cpu.interrupt_count;
+                int64_t full_render_begin_us = esp_timer_get_time();
                 rtype_m72_core_render_frame(&core, fb);
+                full_last_fb_audit = audit_framebuffer(fb);
+                full_prof_render_us += (uint64_t)(esp_timer_get_time() - full_render_begin_us);
+                full_prof_renders++;
             } else
 #endif
             {
@@ -332,7 +412,11 @@ void app_main(void) {
         } else {
             rtype_video_render_boot_pattern(fb, frame);
         }
+        int64_t full_present_begin_us = esp_timer_get_time();
         esp_err_t err = rtype_display_present_rgb565(fb, RTYPE_GAME_W, RTYPE_GAME_H);
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+        full_prof_present_us += (uint64_t)(esp_timer_get_time() - full_present_begin_us);
+#endif
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "present failed: %s", esp_err_to_name(err));
         }

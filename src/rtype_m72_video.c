@@ -91,6 +91,111 @@ static uint8_t fallback_sprite_pixel(unsigned code, unsigned x, unsigned y) {
     return (uint8_t)((v >> 2) & 0x0fu);
 }
 
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+typedef struct {
+    const uint8_t *src;
+    size_t size;
+    unsigned code_count;
+    uint32_t *tile_rows;
+} s3_tile_decode_cache_t;
+
+typedef struct {
+    const uint8_t *src;
+    size_t size;
+    unsigned code_count;
+    uint64_t *sprite_rows;
+} s3_sprite_decode_cache_t;
+
+static s3_tile_decode_cache_t s_s3_tile_caches[2];
+static s3_sprite_decode_cache_t s_s3_sprite_cache;
+
+static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size, unsigned *code_count_out) {
+    if (code_count_out) *code_count_out = 0;
+    if (region == NULL || size < 4u) return NULL;
+    for (unsigned i = 0; i < 2u; i++) {
+        if (s_s3_tile_caches[i].src == region && s_s3_tile_caches[i].size == size && s_s3_tile_caches[i].tile_rows != NULL) {
+            if (code_count_out) *code_count_out = s_s3_tile_caches[i].code_count;
+            return s_s3_tile_caches[i].tile_rows;
+        }
+    }
+    unsigned slot = 0;
+    if (s_s3_tile_caches[0].tile_rows != NULL && s_s3_tile_caches[1].tile_rows == NULL) slot = 1;
+    else if (s_s3_tile_caches[0].tile_rows != NULL && s_s3_tile_caches[1].tile_rows != NULL) return NULL;
+
+    const unsigned quarter = (unsigned)(size / 4u);
+    const unsigned code_count = quarter / 8u;
+    if (code_count == 0) return NULL;
+    uint32_t *rows = (uint32_t *)rtype_m72_alloc_region((size_t)code_count * 8u * sizeof(uint32_t), "s3-tile-rows");
+    if (rows == NULL) return NULL;
+    const unsigned plane_offsets[4] = {quarter * 3u, quarter * 2u, quarter, 0u};
+    for (unsigned code = 0; code < code_count; code++) {
+        for (unsigned y = 0; y < 8u; y++) {
+            unsigned row = code * 8u + y;
+            uint8_t b[4];
+            for (unsigned p = 0; p < 4u; p++) {
+                unsigned off = plane_offsets[p] + row;
+                b[p] = (off < size) ? region[off] : 0;
+            }
+            uint32_t packed = 0;
+            for (unsigned x = 0; x < 8u; x++) {
+                unsigned bit = 7u - x;
+                uint8_t pen = (uint8_t)((((b[0] >> bit) & 1u) << 3) |
+                                        (((b[1] >> bit) & 1u) << 2) |
+                                        (((b[2] >> bit) & 1u) << 1) |
+                                        ((b[3] >> bit) & 1u));
+                packed = (packed << 4) | pen;
+            }
+            rows[row] = packed;
+        }
+    }
+    s_s3_tile_caches[slot] = (s3_tile_decode_cache_t){ .src = region, .size = size, .code_count = code_count, .tile_rows = rows };
+    ESP_LOGI(TAG, "S3 decoded tile row cache: %u codes %u bytes @%p", code_count,
+             (unsigned)((size_t)code_count * 8u * sizeof(uint32_t)), (void *)rows);
+    if (code_count_out) *code_count_out = code_count;
+    return rows;
+}
+
+static const uint64_t *s3_get_sprite_rows(const rtype_m72_video_t *video, unsigned *code_count_out) {
+    if (code_count_out) *code_count_out = 0;
+    if (video == NULL || video->sprites == NULL || video->sprites_size < 4u) return NULL;
+    if (s_s3_sprite_cache.src == video->sprites && s_s3_sprite_cache.size == video->sprites_size &&
+        s_s3_sprite_cache.sprite_rows != NULL) {
+        if (code_count_out) *code_count_out = s_s3_sprite_cache.code_count;
+        return s_s3_sprite_cache.sprite_rows;
+    }
+    const unsigned quarter = (unsigned)(video->sprites_size / 4u);
+    const unsigned code_count = quarter / 32u;
+    if (code_count == 0) return NULL;
+    uint64_t *rows = (uint64_t *)rtype_m72_alloc_region((size_t)code_count * 16u * sizeof(uint64_t), "s3-sprite-rows");
+    if (rows == NULL) return NULL;
+    const unsigned plane_offsets[4] = {quarter * 3u, quarter * 2u, quarter, 0u};
+    for (unsigned code = 0; code < code_count; code++) {
+        for (unsigned y = 0; y < 16u; y++) {
+            uint64_t packed = 0;
+            for (unsigned x = 0; x < 16u; x++) {
+                unsigned byte_in_char = (x >= 8u) ? (16u + y) : y;
+                unsigned bit = 7u - (x & 7u);
+                unsigned row = code * 32u + byte_in_char;
+                uint8_t pen = 0;
+                for (unsigned p = 0; p < 4u; p++) {
+                    unsigned off = plane_offsets[p] + row;
+                    uint8_t b = (off < video->sprites_size) ? video->sprites[off] : 0;
+                    pen |= (uint8_t)(((b >> bit) & 1u) << (3u - p));
+                }
+                packed = (packed << 4) | pen;
+            }
+            rows[code * 16u + y] = packed;
+        }
+    }
+    s_s3_sprite_cache = (s3_sprite_decode_cache_t){ .src = video->sprites, .size = video->sprites_size,
+                                                    .code_count = code_count, .sprite_rows = rows };
+    ESP_LOGI(TAG, "S3 decoded sprite row cache: %u codes %u bytes @%p", code_count,
+             (unsigned)((size_t)code_count * 16u * sizeof(uint64_t)), (void *)rows);
+    if (code_count_out) *code_count_out = code_count;
+    return rows;
+}
+#endif
+
 IRAM_ATTR static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, unsigned code, unsigned x, unsigned y) {
     if (video->sprites == NULL || video->sprites_size < 4u || code * 32u >= video->sprites_size / 4u) {
         return fallback_sprite_pixel(code, x, y);
@@ -124,6 +229,15 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
                             size_t region_size, const uint8_t *vram, unsigned palette_base,
                             uint16_t sx_scroll, uint16_t sy_scroll, bool transparent) {
     if (vram == NULL) return;
+    const unsigned quarter = (unsigned)(region_size / 4u);
+    const unsigned plane0 = quarter * 3u;
+    const unsigned plane1 = quarter * 2u;
+    const unsigned plane2 = quarter;
+    const unsigned plane3 = 0u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    unsigned decoded_tile_codes = 0;
+    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
+#endif
     for (unsigned ty = 0; ty < 64u; ty++) {
         for (unsigned tx = 0; tx < 64u; tx++) {
             const uint8_t *entry = vram + (ty * 64u + tx) * 4u;
@@ -138,15 +252,63 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
             while (base_x < -8) base_x += 512;
             while (base_y < -8) base_y += 512;
             if (base_x >= (int)RTYPE_GAME_W || base_y >= (int)RTYPE_GAME_H) continue;
+
+            const bool rom_ok = (region != NULL && region_size >= 4u && code * 8u < quarter);
+            const unsigned tile_base = code * 8u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            const bool cache_ok = (decoded_tile_rows != NULL && code < decoded_tile_codes);
+#endif
             for (unsigned py = 0; py < 8u; py++) {
-                for (unsigned px = 0; px < 8u; px++) {
-                    unsigned rx = flipx ? (7u - px) : px;
-                    unsigned ry = flipy ? (7u - py) : py;
-                    uint8_t pen = decode_tile_pixel(region, region_size, code, rx, ry);
+                int dst_y = base_y + (int)py;
+                if (dst_y < 0 || dst_y >= (int)RTYPE_GAME_H) continue;
+                unsigned ry = flipy ? (7u - py) : py;
+                uint8_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                uint32_t packed_row = cache_ok ? decoded_tile_rows[code * 8u + ry] : 0;
+                if (!cache_ok && rom_ok) {
+#else
+                if (rom_ok) {
+#endif
+                    unsigned row = tile_base + ry;
+                    unsigned off0 = plane0 + row;
+                    unsigned off1 = plane1 + row;
+                    unsigned off2 = plane2 + row;
+                    unsigned off3 = plane3 + row;
+                    b0 = (off0 < region_size) ? region[off0] : 0;
+                    b1 = (off1 < region_size) ? region[off1] : 0;
+                    b2 = (off2 < region_size) ? region[off2] : 0;
+                    b3 = (off3 < region_size) ? region[off3] : 0;
+                }
+                int dst_x_base = base_x - 64;
+                int px_begin = 0;
+                int px_end = 8;
+                if (dst_x_base < 0) px_begin = -dst_x_base;
+                if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
+                if (px_begin >= px_end) continue;
+                uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W + dst_x_base;
+                for (int px_i = px_begin; px_i < px_end; px_i++) {
+                    unsigned px = (unsigned)px_i;
+                    uint8_t pen;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                    if (cache_ok) {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        pen = (uint8_t)((packed_row >> ((7u - rx) * 4u)) & 0x0fu);
+                    } else
+#endif
+                    if (rom_ok) {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        unsigned bit = 7u - rx;
+                        pen = (uint8_t)((((b0 >> bit) & 1u) << 3) |
+                                        (((b1 >> bit) & 1u) << 2) |
+                                        (((b2 >> bit) & 1u) << 1) |
+                                        ((b3 >> bit) & 1u));
+                    } else {
+                        unsigned rx = flipx ? (7u - px) : px;
+                        pen = fallback_tile_pixel(code, rx, ry);
+                    }
                     if (transparent && pen == 0) continue;
                     unsigned pi = palette_base + color * 16u + pen;
-                    put_pixel(fb, base_x + (int)px, base_y + (int)py,
-                              visible_color(video->palette[pi & 0x1ffu], pi, pen));
+                    dst[px_i] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
                 }
             }
         }
@@ -156,6 +318,15 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
 static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
     if (sprite_ram == NULL) return;
+    const unsigned quarter = (unsigned)(video->sprites_size / 4u);
+    const unsigned plane0 = quarter * 3u;
+    const unsigned plane1 = quarter * 2u;
+    const unsigned plane2 = quarter;
+    const unsigned plane3 = 0u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    unsigned decoded_sprite_codes = 0;
+    const uint64_t *decoded_sprite_rows = s3_get_sprite_rows(video, &decoded_sprite_codes);
+#endif
     for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0; offs -= 8) {
         const uint8_t *s = sprite_ram + offs;
         uint16_t syw = read16le(s + 0);
@@ -171,18 +342,73 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
         unsigned w = 1u << ((attr >> 14) & 3u);
         unsigned h = 1u << ((attr >> 12) & 3u);
         sy -= (int)(16u * h);
-        for (unsigned cx = 0; cx < w; cx++) {
-            for (unsigned cy = 0; cy < h; cy++) {
+        for (unsigned cy = 0; cy < h; cy++) {
+            for (unsigned cx = 0; cx < w; cx++) {
                 unsigned c = code + (flipx ? 8u * (w - 1u - cx) : 8u * cx) + (flipy ? (h - 1u - cy) : cy);
+                const bool rom_ok = (video->sprites != NULL && video->sprites_size >= 4u && c * 32u < quarter);
+                const unsigned sprite_base = c * 32u;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                const bool cache_ok = (decoded_sprite_rows != NULL && c < decoded_sprite_codes);
+#endif
                 for (unsigned py = 0; py < 16u; py++) {
-                    for (unsigned px = 0; px < 16u; px++) {
+                    int dst_y = sy + (int)(cy * 16u + py);
+                    if (dst_y < 0 || dst_y >= (int)RTYPE_GAME_H) continue;
+                    unsigned ry = flipy ? (15u - py) : py;
+                    uint8_t left0 = 0, left1 = 0, left2 = 0, left3 = 0;
+                    uint8_t right0 = 0, right1 = 0, right2 = 0, right3 = 0;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                    uint64_t packed_row = cache_ok ? decoded_sprite_rows[c * 16u + ry] : 0;
+                    if (!cache_ok && rom_ok) {
+#else
+                    if (rom_ok) {
+#endif
+                        unsigned left_row = sprite_base + ry;
+                        unsigned right_row = sprite_base + 16u + ry;
+                        unsigned off;
+                        off = plane0 + left_row;  left0  = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane1 + left_row;  left1  = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane2 + left_row;  left2  = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane3 + left_row;  left3  = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane0 + right_row; right0 = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane1 + right_row; right1 = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane2 + right_row; right2 = (off < video->sprites_size) ? video->sprites[off] : 0;
+                        off = plane3 + right_row; right3 = (off < video->sprites_size) ? video->sprites[off] : 0;
+                    }
+                    int dst_x_base = sx + (int)(cx * 16u) - 64;
+                    int px_begin = 0;
+                    int px_end = 16;
+                    if (dst_x_base < 0) px_begin = -dst_x_base;
+                    if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
+                    if (px_begin >= px_end) continue;
+                    uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W + dst_x_base;
+                    for (int px_i = px_begin; px_i < px_end; px_i++) {
+                        unsigned px = (unsigned)px_i;
                         unsigned rx = flipx ? (15u - px) : px;
-                        unsigned ry = flipy ? (15u - py) : py;
-                        uint8_t pen = decode_sprite_pixel(video, c, rx, ry);
+                        uint8_t pen;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                        if (cache_ok) {
+                            pen = (uint8_t)((packed_row >> ((15u - rx) * 4u)) & 0x0fu);
+                        } else
+#endif
+                        if (rom_ok) {
+                            unsigned bit = 7u - (rx & 7u);
+                            if (rx < 8u) {
+                                pen = (uint8_t)((((left0 >> bit) & 1u) << 3) |
+                                                (((left1 >> bit) & 1u) << 2) |
+                                                (((left2 >> bit) & 1u) << 1) |
+                                                ((left3 >> bit) & 1u));
+                            } else {
+                                pen = (uint8_t)((((right0 >> bit) & 1u) << 3) |
+                                                (((right1 >> bit) & 1u) << 2) |
+                                                (((right2 >> bit) & 1u) << 1) |
+                                                ((right3 >> bit) & 1u));
+                            }
+                        } else {
+                            pen = fallback_sprite_pixel(c, rx, ry);
+                        }
                         if (pen == 0) continue;
                         unsigned pi = color * 16u + pen;
-                        put_pixel(fb, sx + (int)(cx * 16u + px), sy + (int)(cy * 16u + py),
-                                  visible_color(video->palette[pi & 0x1ffu], pi, pen));
+                        dst[px_i] = visible_color(video->palette[pi & 0x1ffu], pi, pen);
                     }
                 }
             }

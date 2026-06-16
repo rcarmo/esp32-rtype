@@ -139,7 +139,7 @@ esp_err_t rtype_m72_core_map_maincpu_partition(rtype_m72_core_t *core, const cha
         core->video.tiles1 = core->rom_map + 0xe0000u;
         core->video.tiles1_size = 0x20000u;
     }
-    ESP_LOGI(TAG, "mapped CYD packed ROM partition '%s' @%p", label, mapped);
+    ESP_LOGI(TAG, "mapped main CPU ROM partition '%s' @%p", label, mapped);
     return ESP_OK;
 }
 
