@@ -358,6 +358,47 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
         if (sy[c] == 0xffffu) all_active = 0;
     }
 
+#if defined(RTYPE_BOARD_ESP32_2432S028)
+    if (!include_sprites) {
+        // Full-width snapshots remove chunk/mixed-frame trails. Use a modest
+        // 2x2 background sampler on the tiny CYD panel to improve display FPS;
+        // sprites are overlaid afterwards from the immutable snapshot.
+        for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py += 2u) {
+            const unsigned raw_x = (unsigned)s_cyd_src_x_for_phys_y[py] + 64u;
+            uint16_t *out0 = dst + (size_t)py * cols;
+            uint16_t *out1 = (py + 1u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 1u) * cols) : out0;
+            for (unsigned c = 0; c < cols; c += 2u) {
+                uint16_t packed_px = 0;
+                if (!video->video_off && sy[c] != 0xffffu) {
+                    const unsigned raw_y = sy[c];
+                    bool hit = false;
+                    uint16_t px = 0;
+                    if (use_layer0_as_bg) {
+                        bool fg_hit = false;
+                        uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                              256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                        px = fg_hit ? fg : 0;
+                    } else {
+                        px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
+                                                     256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
+                        bool fg_hit = false;
+                        uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                              256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                        if (fg_hit) px = fg;
+                    }
+                    packed_px = rtype_blit_rgb565_identity(px);
+                }
+                out0[c] = packed_px;
+                out1[c] = packed_px;
+                if (c + 1u < cols) {
+                    out0[c + 1u] = packed_px;
+                    out1[c + 1u] = packed_px;
+                }
+            }
+        }
+        return;
+    }
+#endif
 
     for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
         uint16_t *out = dst + (size_t)py * cols;
