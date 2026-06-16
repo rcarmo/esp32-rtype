@@ -274,7 +274,7 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
     for (unsigned x = x0; x < x1; x += s_strip_cols) {
         unsigned cols = s_strip_cols;
         if (x + cols > x1) cols = x1 - x;
-        if (include_sprites) rtype_m72_video_render_cyd_composited_columns(video, s_strip, x, cols);
+        if (include_sprites) rtype_m72_video_render_cyd_columns(video, s_strip, x, cols);
         else rtype_m72_video_render_cyd_background_columns(video, s_strip, x, cols);
         if (checksum != NULL) {
             for (unsigned i = 0; i < cols * RTYPE_BLIT_CYD_PHYS_H; i++) {
@@ -291,13 +291,11 @@ static esp_err_t rtype_display_flush_m72_video_blocking(const rtype_m72_video_t 
     if (video == NULL) return ESP_ERR_INVALID_ARG;
     uint32_t checksum = 0;
     bool sample_log = (s_live_present_count & 0x1fu) == 0;
-    const unsigned active_x0 = RTYPE_BLIT_CYD_ACTIVE_X0 & ~1u;
-    const unsigned active_x1 = (RTYPE_BLIT_CYD_ACTIVE_X1 + 1u) & ~1u;
-    draw_columns(video, active_x0, active_x1, true, sample_log ? &checksum : NULL);
+    draw_columns(video, 0, RTYPE_BLIT_CYD_PHYS_W, true, sample_log ? &checksum : NULL);
 
     if (sample_log) {
         ESP_LOGI(TAG, "CYD live snapshot updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u dropped=%" PRIu32,
-                 active_x1 - active_x0, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
+                 RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
     }
     s_live_present_count++;
     return ESP_OK;

@@ -88,6 +88,8 @@ void app_main(void) {
             ESP_LOGI(TAG, "CYD CPU backend starting without full framebuffer");
         }
         uint64_t next_vblank = 120000;
+        int64_t next_vblank_us = esp_timer_get_time();
+        const int64_t frame_period_us = 16667; // pace vblank to real time; skip idle instructions, not game time
         bool main_loop_seen = false;
         bool frame_vector_ready = false;
         bool live_video_ready = false;
@@ -118,9 +120,16 @@ void app_main(void) {
                         }
                     }
                     if (main_loop_seen && in_main_loop && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0) {
-                        if (cpu.insn < next_vblank) cpu.insn = next_vblank;
-                        rtype_i86_interrupt(&cpu, 0x20);
-                        next_vblank += 120000;
+                        int64_t now_us = esp_timer_get_time();
+                        if (now_us >= next_vblank_us) {
+                            if (cpu.insn < next_vblank) cpu.insn = next_vblank;
+                            rtype_i86_interrupt(&cpu, 0x20);
+                            next_vblank += 120000;
+                            next_vblank_us += frame_period_us;
+                            if (next_vblank_us < now_us - frame_period_us) next_vblank_us = now_us + frame_period_us;
+                        } else {
+                            break;
+                        }
                     }
                     rtype_i86_step(&cpu);
                 }
