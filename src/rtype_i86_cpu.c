@@ -45,15 +45,29 @@ static void ww(rtype_i86_cpu_t *cpu, uint32_t addr, uint16_t v) {
 }
 
 static inline uint8_t fetch8(rtype_i86_cpu_t *cpu) {
+    rtype_m72_core_t *core = cpu->core;
     uint32_t pc = (((uint32_t)cpu->s[RTYPE_I86_CS] << 4) + cpu->ip) & 0xfffffu;
-    uint8_t v = rb(cpu, pc);
     cpu->ip++;
-    return v;
+    if (core != NULL && core->rom_map != NULL) {
+        if (pc <= 0x3ffffu) return core->rom_map[pc];
+        if (pc >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (pc - 0xe0000u)];
+    }
+    return rb(cpu, pc);
 }
 
-static uint16_t fetch16(rtype_i86_cpu_t *cpu) {
-    uint16_t v = fetch8(cpu);
-    v |= (uint16_t)fetch8(cpu) << 8;
+static inline uint16_t fetch16(rtype_i86_cpu_t *cpu) {
+    rtype_m72_core_t *core = cpu->core;
+    uint32_t pc = (((uint32_t)cpu->s[RTYPE_I86_CS] << 4) + cpu->ip) & 0xfffffu;
+    cpu->ip = (uint16_t)(cpu->ip + 2u);
+    if (core != NULL && core->rom_map != NULL) {
+        if (pc < 0x3ffffu) return (uint16_t)(core->rom_map[pc] | ((uint16_t)core->rom_map[pc + 1u] << 8));
+        if (pc >= RTYPE_M72_RESET_VECTOR_BASE && pc < 0xfffffu) {
+            uint32_t off = 0x20000u + (pc - 0xe0000u);
+            return (uint16_t)(core->rom_map[off] | ((uint16_t)core->rom_map[off + 1u] << 8));
+        }
+    }
+    uint16_t v = rb(cpu, pc);
+    v |= (uint16_t)rb(cpu, pc + 1u) << 8;
     return v;
 }
 

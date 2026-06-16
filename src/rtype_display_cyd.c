@@ -15,8 +15,15 @@
 
 static const char *TAG = "rtype_display_cyd";
 
+typedef enum {
+    RTYPE_DISPLAY_JOB_FRAMEBUFFER = 0,
+    RTYPE_DISPLAY_JOB_M72_CORE = 1,
+} rtype_display_job_kind_t;
+
 typedef struct {
     const uint16_t *framebuffer;
+    rtype_m72_core_t *core;
+    rtype_display_job_kind_t kind;
     uint32_t sequence;
 } rtype_display_job_t;
 
@@ -68,6 +75,8 @@ static void rtype_display_flush_blocking(const uint16_t *framebuffer) {
     }
 }
 
+static esp_err_t rtype_display_flush_m72_core_blocking(rtype_m72_core_t *core);
+
 static void rtype_display_task(void *arg) {
     (void)arg;
     ESP_LOGI(TAG, "CYD display task started on core %d", xPortGetCoreID());
@@ -79,7 +88,11 @@ static void rtype_display_task(void *arg) {
                 job = newer;
                 s_dropped_jobs++;
             }
-            rtype_display_flush_blocking(job.framebuffer);
+            if (job.kind == RTYPE_DISPLAY_JOB_M72_CORE) {
+                (void)rtype_display_flush_m72_core_blocking(job.core);
+            } else {
+                rtype_display_flush_blocking(job.framebuffer);
+            }
             s_displayed_sequence = job.sequence;
         }
     }
@@ -94,9 +107,10 @@ esp_err_t rtype_display_init(void) {
              RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_ACTIVE_X1 - 1u);
     lcd_cyd_init();
 
-    // Full 240x320 (153KB) starves the no-PSRAM sparse emulator heap on CYD.
-    // 80 columns is the widest safe DMA chunk observed with the live core.
-    static const unsigned preferred_cols[] = {80u, 40u, 16u, 8u};
+    // Full 240x320 (153KB) can starve the no-PSRAM sparse emulator heap on CYD.
+    // Try 120 columns (two DMA chunks) with the safe compositor; fall back if
+    // heap fragmentation prevents the allocation.
+    static const unsigned preferred_cols[] = {120u, 80u, 40u, 16u, 8u};
     for (unsigned i = 0; i < sizeof(preferred_cols) / sizeof(preferred_cols[0]); i++) {
         s_strip_cols = preferred_cols[i];
         s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
@@ -125,7 +139,7 @@ esp_err_t rtype_display_init(void) {
     }
 
     BaseType_t ok = xTaskCreatePinnedToCore(rtype_display_task, "rtype-cyd-display", 4096,
-                                            NULL, tskIDLE_PRIORITY + 2, &s_display_task, 0);
+                                            NULL, tskIDLE_PRIORITY + 2, &s_display_task, 1);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "failed to start CYD display task; falling back to blocking present");
         s_display_task = NULL;
@@ -219,7 +233,7 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
     for (unsigned x = x0; x < x1; x += s_strip_cols) {
         unsigned cols = s_strip_cols;
         if (x + cols > x1) cols = x1 - x;
-        if (include_sprites) rtype_m72_video_render_cyd_composited_columns(video, s_strip, x, cols);
+        if (include_sprites) rtype_m72_video_render_cyd_columns(video, s_strip, x, cols);
         else rtype_m72_video_render_cyd_background_columns(video, s_strip, x, cols);
         if (checksum != NULL) {
             for (unsigned i = 0; i < cols * RTYPE_BLIT_CYD_PHYS_H; i++) {
@@ -232,19 +246,38 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
     }
 }
 
-esp_err_t rtype_display_present_m72_core(rtype_m72_core_t *core) {
+static esp_err_t rtype_display_flush_m72_core_blocking(rtype_m72_core_t *core) {
     if (core == NULL) return ESP_ERR_INVALID_ARG;
-    esp_err_t err = rtype_display_init();
-    if (err != ESP_OK) return err;
-
     uint32_t checksum = 0;
     draw_columns(&core->video, 0, RTYPE_BLIT_CYD_PHYS_W, true, &checksum);
 
     if ((s_live_present_count++ & 0x1fu) == 0) {
-        ESP_LOGI(TAG, "CYD live single-pass updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u",
-                 RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols);
+        ESP_LOGI(TAG, "CYD live single-pass updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u dropped=%" PRIu32,
+                 RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols, (uint32_t)s_dropped_jobs);
     }
     return ESP_OK;
+}
+
+esp_err_t rtype_display_present_m72_core(rtype_m72_core_t *core) {
+    if (core == NULL) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = rtype_display_init();
+    if (err != ESP_OK) return err;
+    if (s_display_task != NULL && s_display_queue != NULL) {
+        rtype_display_job_t job = {
+            .framebuffer = NULL,
+            .core = core,
+            .kind = RTYPE_DISPLAY_JOB_M72_CORE,
+            .sequence = ++s_present_sequence,
+        };
+        if (xQueueSend(s_display_queue, &job, 0) != pdTRUE) {
+            rtype_display_job_t dropped;
+            (void)xQueueReceive(s_display_queue, &dropped, 0);
+            s_dropped_jobs++;
+            (void)xQueueSend(s_display_queue, &job, 0);
+        }
+        return ESP_OK;
+    }
+    return rtype_display_flush_m72_core_blocking(core);
 }
 
 esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned width, unsigned height) {
@@ -257,6 +290,8 @@ esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned wid
     if (s_display_task != NULL && s_display_queue != NULL) {
         rtype_display_job_t job = {
             .framebuffer = framebuffer,
+            .core = NULL,
+            .kind = RTYPE_DISPLAY_JOB_FRAMEBUFFER,
             .sequence = ++s_present_sequence,
         };
         if (xQueueSend(s_display_queue, &job, 0) != pdTRUE) {
