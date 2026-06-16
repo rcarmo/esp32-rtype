@@ -14,7 +14,7 @@ HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
 HOST_RTYPE_INSTRUCTIONS ?= 300000000
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor capture-s3-playfield clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -30,6 +30,7 @@ help:
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target)"
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
 	@echo "  make monitor                  - serial monitor"
+	@echo "  make capture-s3-playfield     - capture camera frames when S3 reaches active playfield state"
 
 inspect-rom:
 	bun tools/inspect_rtype.ts $(ROM_ZIP) $(ROM_EXTRACTED)
@@ -69,6 +70,9 @@ flash:
 
 monitor:
 	$(PIO) device monitor -e $(PIO_ENV) --port $(SERIAL_PORT)
+
+capture-s3-playfield:
+	/workspace/.venvs/pio/bin/python tools/capture_s3_playfield.py --port $(SERIAL_PORT)
 
 clean:
 	rm -rf .pio build sdkconfig sdkconfig.old roms/extracted artifacts/packed-rtype artifacts/gfx-atlas artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png
