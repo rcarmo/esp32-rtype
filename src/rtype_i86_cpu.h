@@ -30,6 +30,8 @@ typedef struct {
     uint16_t s[4];
     uint16_t ip;
     bool cf;
+    bool pf;
+    bool af;
     bool zf;
     bool sf;
     bool of;

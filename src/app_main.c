@@ -119,10 +119,12 @@ void app_main(void) {
                             break;
                         }
                     }
-                    if (main_loop_seen && in_main_loop && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0) {
+                    bool idle_queue_empty_tail = (cpu.s[RTYPE_I86_CS] == 0x0040 && cpu.ip == 0x00ddu && cpu.zf);
+                    if (main_loop_seen && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0 &&
+                        (idle_queue_empty_tail || (in_main_loop && cpu.insn >= next_vblank))) {
+                        if (idle_queue_empty_tail && cpu.insn < next_vblank) cpu.insn = next_vblank;
                         int64_t now_us = esp_timer_get_time();
                         if (now_us >= next_vblank_us) {
-                            if (cpu.insn < next_vblank) cpu.insn = next_vblank;
                             rtype_i86_interrupt(&cpu, 0x20);
                             next_vblank += 120000;
                             next_vblank_us += frame_period_us;
@@ -161,11 +163,18 @@ void app_main(void) {
                     uint64_t dinsn = cpu.insn - last_perf_insn;
                     uint64_t dirq = cpu.interrupt_count - last_perf_irq;
                     uint64_t dt_us = (uint64_t)(now_us - last_perf_us);
-                    ESP_LOGI(TAG, "CYD PERF pc=0x%05" PRIx32 " ips=%llu irq_s=%llu game_frame=0x%04x live=%d vram=%u/%u spr=%u",
+                    ESP_LOGI(TAG, "CYD PERF pc=0x%05" PRIx32 " ips=%llu irq_s=%llu frame=0x%04x root=0x%04x main=0x%04x in=%04x/%04x dsw=%04x scroll=(%u,%u)/(%u,%u) live=%d vram=%u/%u spr=%u",
                              rtype_i86_pc(&cpu),
                              (unsigned long long)((dinsn * 1000000ull) / dt_us),
                              (unsigned long long)((dirq * 1000000ull) / dt_us),
                              (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
+                             (unsigned)rtype_m72_core_read16(&core, 0x40000u),
+                             (unsigned)rtype_m72_core_read16(&core, 0x43060u),
+                             (unsigned)rtype_m72_core_read16(&core, 0x42040u),
+                             (unsigned)rtype_m72_core_read16(&core, 0x42042u),
+                             (unsigned)rtype_m72_core_read16(&core, 0x42044u),
+                             (unsigned)core.video.scrollx[0], (unsigned)core.video.scrolly[0],
+                             (unsigned)core.video.scrollx[1], (unsigned)core.video.scrolly[1],
                              live_video_ready ? 1 : 0, (unsigned)vram0_nz, (unsigned)vram1_nz, (unsigned)spr_nz);
                     last_perf_insn = cpu.insn;
                     last_perf_irq = cpu.interrupt_count;

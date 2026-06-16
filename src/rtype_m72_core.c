@@ -25,7 +25,7 @@ static uint8_t pal5(uint16_t v) {
 static esp_err_t alloc_sparse_region(uint8_t **ptr, size_t bytes, const char *name) {
     *ptr = rtype_m72_alloc_region(bytes, name);
     if (*ptr == NULL) return ESP_ERR_NO_MEM;
-    memset(*ptr, 0, bytes);
+    memset(*ptr, 0xff, bytes);
     return ESP_OK;
 }
 
@@ -135,7 +135,7 @@ static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     addr &= 0xfffffu;
     if (core->rom_map != NULL) {
         if (addr <= 0x3ffffu) return core->rom_map[addr];
-        if (addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
+        if (addr >= 0xe0000u) return core->rom_map[0x20000u + (addr - 0xe0000u)];
     }
     if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
     if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];

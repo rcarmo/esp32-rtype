@@ -17,7 +17,7 @@ static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
     if (core->sparse_mode) {
         if (core->rom_map != NULL) {
             if (addr <= 0x3ffffu) return core->rom_map[addr];
-            if (addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
+            if (addr >= 0xe0000u) return core->rom_map[0x20000u + (addr - 0xe0000u)];
         }
         if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
         if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
@@ -85,7 +85,7 @@ static inline uint8_t fetch8(rtype_i86_cpu_t *cpu) {
     cpu->ip++;
     if (core != NULL && core->rom_map != NULL) {
         if (pc <= 0x3ffffu) return core->rom_map[pc];
-        if (pc >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (pc - 0xe0000u)];
+        if (pc >= 0xe0000u) return core->rom_map[0x20000u + (pc - 0xe0000u)];
     }
     return rb(cpu, pc);
 }
@@ -96,7 +96,7 @@ static inline uint16_t fetch16(rtype_i86_cpu_t *cpu) {
     cpu->ip = (uint16_t)(cpu->ip + 2u);
     if (core != NULL && core->rom_map != NULL) {
         if (pc < 0x3ffffu) return (uint16_t)(core->rom_map[pc] | ((uint16_t)core->rom_map[pc + 1u] << 8));
-        if (pc >= RTYPE_M72_RESET_VECTOR_BASE && pc < 0xfffffu) {
+        if (pc >= 0xe0000u && pc < 0xfffffu) {
             uint32_t off = 0x20000u + (pc - 0xe0000u);
             return (uint16_t)(core->rom_map[off] | ((uint16_t)core->rom_map[off + 1u] << 8));
         }
@@ -111,51 +111,71 @@ static inline uint8_t *reg8(rtype_i86_cpu_t *cpu, unsigned id) {
     return ((uint8_t *)cpu->r) + off[id & 7u];
 }
 
-static void set_logic8(rtype_i86_cpu_t *cpu, uint8_t v) {
+static inline bool parity_even(uint8_t v) {
+    v ^= v >> 4;
+    v &= 0x0fu;
+    return ((0x6996u >> v) & 1u) == 0;
+}
+
+static inline void set_szp8(rtype_i86_cpu_t *cpu, uint8_t v) {
     cpu->zf = v == 0;
     cpu->sf = (v & 0x80u) != 0;
+    cpu->pf = parity_even(v);
+}
+
+static inline void set_szp16(rtype_i86_cpu_t *cpu, uint16_t v) {
+    cpu->zf = v == 0;
+    cpu->sf = (v & 0x8000u) != 0;
+    cpu->pf = parity_even((uint8_t)v);
+}
+
+static void set_logic8(rtype_i86_cpu_t *cpu, uint8_t v) {
+    set_szp8(cpu, v);
     cpu->cf = false;
     cpu->of = false;
+    cpu->af = false;
 }
 
 static void set_logic16(rtype_i86_cpu_t *cpu, uint16_t v) {
-    cpu->zf = v == 0;
-    cpu->sf = (v & 0x8000u) != 0;
+    set_szp16(cpu, v);
     cpu->cf = false;
     cpu->of = false;
+    cpu->af = false;
 }
 
 static void set_add8(rtype_i86_cpu_t *cpu, uint8_t a, uint8_t b, uint8_t res) {
-    cpu->zf = res == 0;
-    cpu->sf = (res & 0x80u) != 0;
+    set_szp8(cpu, res);
     cpu->cf = (uint16_t)a + b > 0xffu;
+    cpu->af = ((a ^ b ^ res) & 0x10u) != 0;
     cpu->of = ((~(a ^ b) & (a ^ res)) & 0x80u) != 0;
 }
 
 static void set_add16(rtype_i86_cpu_t *cpu, uint16_t a, uint16_t b, uint16_t res) {
-    cpu->zf = res == 0;
-    cpu->sf = (res & 0x8000u) != 0;
+    set_szp16(cpu, res);
     cpu->cf = (uint32_t)a + b > 0xffffu;
+    cpu->af = ((a ^ b ^ res) & 0x10u) != 0;
     cpu->of = ((~(a ^ b) & (a ^ res)) & 0x8000u) != 0;
 }
 
 static void set_sub8(rtype_i86_cpu_t *cpu, uint8_t a, uint8_t b, uint8_t res) {
-    cpu->zf = res == 0;
-    cpu->sf = (res & 0x80u) != 0;
+    set_szp8(cpu, res);
     cpu->cf = a < b;
+    cpu->af = ((a ^ b ^ res) & 0x10u) != 0;
     cpu->of = ((a ^ b) & (a ^ res) & 0x80u) != 0;
 }
 
 static void set_sub16(rtype_i86_cpu_t *cpu, uint16_t a, uint16_t b, uint16_t res) {
-    cpu->zf = res == 0;
-    cpu->sf = (res & 0x8000u) != 0;
+    set_szp16(cpu, res);
     cpu->cf = a < b;
+    cpu->af = ((a ^ b ^ res) & 0x10u) != 0;
     cpu->of = ((a ^ b) & (a ^ res) & 0x8000u) != 0;
 }
 
 static uint16_t make_flags(const rtype_i86_cpu_t *cpu) {
     uint16_t f = 0xf002u;
     if (cpu->cf) f |= 0x0001u;
+    if (cpu->pf) f |= 0x0004u;
+    if (cpu->af) f |= 0x0010u;
     if (cpu->zf) f |= 0x0040u;
     if (cpu->sf) f |= 0x0080u;
     if (cpu->iff) f |= 0x0200u;
@@ -166,6 +186,8 @@ static uint16_t make_flags(const rtype_i86_cpu_t *cpu) {
 
 static void set_flags_word(rtype_i86_cpu_t *cpu, uint16_t f) {
     cpu->cf = (f & 0x0001u) != 0;
+    cpu->pf = (f & 0x0004u) != 0;
+    cpu->af = (f & 0x0010u) != 0;
     cpu->zf = (f & 0x0040u) != 0;
     cpu->sf = (f & 0x0080u) != 0;
     cpu->iff = (f & 0x0200u) != 0;
@@ -372,13 +394,14 @@ bool rtype_i86_step(rtype_i86_cpu_t *cpu) {
     case 0x23: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint16_t src=(mod==3)?cpu->r[rm]:rw(cpu,ea(cpu,mod,rm)); cpu->r[reg]&=src; set_logic16(cpu,cpu->r[reg]); return true; }
     case 0x24: { uint8_t imm=fetch8(cpu); *reg8(cpu,0)&=imm; set_logic8(cpu,*reg8(cpu,0)); return true; }
     case 0x25: { uint16_t imm=fetch16(cpu); cpu->r[RTYPE_I86_AX]&=imm; set_logic16(cpu,cpu->r[RTYPE_I86_AX]); return true; }
+    case 0x27: { uint8_t old=*reg8(cpu,0); bool oldcf=cpu->cf; if (((*reg8(cpu,0)&0x0fu)>9u)||cpu->af) { *reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)+6u); cpu->af=true; } else cpu->af=false; if (old>0x99u||oldcf) { *reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)+0x60u); cpu->cf=true; } else cpu->cf=false; set_szp8(cpu,*reg8(cpu,0)); return true; }
     case 0x28: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint32_t a=0; uint8_t dst=(mod==3)?*reg8(cpu,rm):(a=ea(cpu,mod,rm),rb(cpu,a)); uint8_t res=(uint8_t)(dst-*reg8(cpu,reg)); set_sub8(cpu,dst,*reg8(cpu,reg),res); if(mod==3)*reg8(cpu,rm)=res; else wb(cpu,a,res); return true; }
     case 0x29: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint32_t a=0; uint16_t dst=(mod==3)?cpu->r[rm]:(a=ea(cpu,mod,rm),rw(cpu,a)); uint16_t res=(uint16_t)(dst-cpu->r[reg]); set_sub16(cpu,dst,cpu->r[reg],res); if(mod==3)cpu->r[rm]=res; else ww(cpu,a,res); return true; }
     case 0x2a: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint8_t src=(mod==3)?*reg8(cpu,rm):rb(cpu,ea(cpu,mod,rm)); uint8_t old=*reg8(cpu,reg); *reg8(cpu,reg)=(uint8_t)(old-src); set_sub8(cpu,old,src,*reg8(cpu,reg)); return true; }
     case 0x2b: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint16_t src=(mod==3)?cpu->r[rm]:rw(cpu,ea(cpu,mod,rm)); uint16_t old=cpu->r[reg]; cpu->r[reg]=(uint16_t)(old-src); set_sub16(cpu,old,src,cpu->r[reg]); return true; }
     case 0x2c: { uint8_t imm=fetch8(cpu); uint8_t old=*reg8(cpu,0); *reg8(cpu,0)=(uint8_t)(old-imm); set_sub8(cpu,old,imm,*reg8(cpu,0)); return true; }
     case 0x2d: { uint16_t imm=fetch16(cpu); uint16_t old=cpu->r[RTYPE_I86_AX]; cpu->r[RTYPE_I86_AX]=(uint16_t)(old-imm); set_sub16(cpu,old,imm,cpu->r[RTYPE_I86_AX]); return true; }
-    case 0x2f: { uint8_t old=*reg8(cpu,0); bool oldcf=cpu->cf; if((old&0x0fu)>9) *reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)-6); if(old>0x99u||oldcf){*reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)-0x60); cpu->cf=true;} else cpu->cf=false; cpu->zf=*reg8(cpu,0)==0; cpu->sf=(*reg8(cpu,0)&0x80u)!=0; return true; }
+    case 0x2f: { uint8_t old=*reg8(cpu,0); bool oldcf=cpu->cf; if (((*reg8(cpu,0)&0x0fu)>9u)||cpu->af) { *reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)-6u); cpu->af=true; } else cpu->af=false; if (old>0x99u||oldcf) { *reg8(cpu,0)=(uint8_t)(*reg8(cpu,0)-0x60u); cpu->cf=true; } else cpu->cf=false; set_szp8(cpu,*reg8(cpu,0)); return true; }
     case 0x32: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint8_t src=(mod==3)?*reg8(cpu,rm):rb(cpu,ea(cpu,mod,rm)); *reg8(cpu,reg)^=src; set_logic8(cpu,*reg8(cpu,reg)); return true; }
     case 0x33: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,reg=(mr>>3)&7,rm=mr&7; uint16_t src=(mod==3)?cpu->r[rm]:rw(cpu,ea(cpu,mod,rm)); cpu->r[reg]^=src; set_logic16(cpu,cpu->r[reg]); return true; }
     case 0x34: { uint8_t imm=fetch8(cpu); *reg8(cpu,0)^=imm; set_logic8(cpu,*reg8(cpu,0)); return true; }
