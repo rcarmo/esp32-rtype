@@ -354,6 +354,49 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
         if (sy[c] == 0xffffu) all_active = 0;
     }
 
+#if defined(RTYPE_BOARD_ESP32_2432S028)
+    // Classic ESP32 CYD is render-bound. Sample one source pixel per 2x2
+    // physical block and duplicate it. The panel is small, and this cuts tile
+    // and sprite sampling work by roughly 4x while preserving full-screen DMA.
+    for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py += 2u) {
+        const unsigned raw_x = (unsigned)s_cyd_src_x_for_phys_y[py] + 64u;
+        uint16_t *out0 = dst + (size_t)py * cols;
+        uint16_t *out1 = (py + 1u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 1u) * cols) : out0;
+        for (unsigned c = 0; c < cols; c += 2u) {
+            uint16_t packed_px = 0;
+            if (!video->video_off && sy[c] != 0xffffu) {
+                const unsigned raw_y = sy[c];
+                bool hit = false;
+                uint16_t px = 0;
+                if (use_layer0_as_bg) {
+                    px = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                 256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, false, &hit);
+                } else {
+                    px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
+                                                 256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
+                    bool fg_hit = false;
+                    uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                          256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                    if (fg_hit) px = fg;
+                }
+                if (have_sprites) {
+                    bool sp_hit = false;
+                    uint16_t sp = sample_sprite_pixel(video, raw_x, raw_y, &sp_hit);
+                    if (sp_hit) px = sp;
+                }
+                packed_px = rtype_blit_rgb565_identity(px);
+            }
+            out0[c] = packed_px;
+            out1[c] = packed_px;
+            if (c + 1u < cols) {
+                out0[c + 1u] = packed_px;
+                out1[c + 1u] = packed_px;
+            }
+        }
+    }
+    return;
+#endif
+
     for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
         uint16_t *out = dst + (size_t)py * cols;
         if (!all_active) {
@@ -421,6 +464,69 @@ void rtype_m72_video_render_cyd_columns(const rtype_m72_video_t *video, uint16_t
 void rtype_m72_video_render_cyd_background_columns(const rtype_m72_video_t *video, uint16_t *dst,
                                                    unsigned phys_x, unsigned cols) {
     render_cyd_columns_impl(video, dst, phys_x, cols, false);
+}
+
+static void overlay_sprite_to_cyd_columns(const rtype_m72_video_t *video, uint16_t *dst,
+                                          unsigned chunk_x, unsigned cols, const uint8_t *s) {
+    uint16_t syw = read16le(s + 0);
+    uint16_t code = read16le(s + 2);
+    uint16_t attr = read16le(s + 4);
+    uint16_t sxw = read16le(s + 6);
+    if ((syw | code | attr | sxw) == 0) return;
+
+    int sx = -256 + (int)(sxw & 0x03ffu);
+    int sy = 384 - (int)(syw & 0x01ffu);
+    bool flipx = (attr & 0x0800u) != 0;
+    bool flipy = (attr & 0x0400u) != 0;
+    unsigned w = 1u << ((attr >> 14) & 3u);
+    unsigned h = 1u << ((attr >> 12) & 3u);
+    sy -= (int)(16u * h);
+    unsigned color = attr & 0x0fu;
+
+    for (unsigned cell_y = 0; cell_y < h; cell_y++) {
+        for (unsigned cell_x = 0; cell_x < w; cell_x++) {
+            unsigned c = code + (flipx ? 8u * (w - 1u - cell_x) : 8u * cell_x) +
+                         (flipy ? (h - 1u - cell_y) : cell_y);
+            for (unsigned py = 0; py < 16u; py++) {
+                int raw_y = sy + (int)(cell_y * 16u + py);
+                if (raw_y < 0 || raw_y >= (int)RTYPE_GAME_H) continue;
+                unsigned phys_col = RTYPE_BLIT_CYD_ACTIVE_X0 + ((unsigned)raw_y * RTYPE_BLIT_CYD_VIEW_H) / RTYPE_GAME_H;
+                if (phys_col < chunk_x || phys_col >= chunk_x + cols) continue;
+                unsigned local_col = phys_col - chunk_x;
+                unsigned ry = flipy ? (15u - py) : py;
+                for (unsigned px = 0; px < 16u; px++) {
+                    int raw_x = sx + (int)(cell_x * 16u + px) - 64;
+                    if (raw_x < 0 || raw_x >= (int)RTYPE_GAME_W) continue;
+                    unsigned logical_x = ((unsigned)raw_x * RTYPE_BLIT_CYD_VIEW_W) / RTYPE_GAME_W;
+                    unsigned phys_y = (RTYPE_BLIT_CYD_LOGICAL_W - 1u) - logical_x;
+                    if (phys_y >= RTYPE_BLIT_CYD_PHYS_H) continue;
+                    unsigned rx = flipx ? (15u - px) : px;
+                    uint8_t pen = decode_sprite_pixel(video, c, rx, ry);
+                    if (pen == 0) continue;
+                    unsigned pi = color * 16u + pen;
+                    uint16_t out = rtype_blit_rgb565_identity(visible_color(video->palette[pi & 0x1ffu], pi, pen));
+                    dst[(size_t)phys_y * cols + local_col] = out;
+                    if (local_col + 1u < cols) dst[(size_t)phys_y * cols + local_col + 1u] = out;
+                    if (phys_y + 1u < RTYPE_BLIT_CYD_PHYS_H) {
+                        dst[(size_t)(phys_y + 1u) * cols + local_col] = out;
+                        if (local_col + 1u < cols) dst[(size_t)(phys_y + 1u) * cols + local_col + 1u] = out;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void rtype_m72_video_render_cyd_composited_columns(const rtype_m72_video_t *video, uint16_t *dst,
+                                                   unsigned phys_x, unsigned cols) {
+    if (video == NULL || dst == NULL || cols == 0 || phys_x >= RTYPE_BLIT_CYD_PHYS_W) return;
+    if (phys_x + cols > RTYPE_BLIT_CYD_PHYS_W) cols = RTYPE_BLIT_CYD_PHYS_W - phys_x;
+    render_cyd_columns_impl(video, dst, phys_x, cols, false);
+    const uint8_t *sprite_ram = video->sprite_buffer_valid ? video->sprite_buffer : video->spriteram;
+    if (sprite_ram == NULL) return;
+    for (int offs = (int)RTYPE_M72_SPRITERAM_BYTES - 8; offs >= 0; offs -= 8) {
+        overlay_sprite_to_cyd_columns(video, dst, phys_x, cols, sprite_ram + offs);
+    }
 }
 
 void rtype_m72_video_render(const rtype_m72_video_t *video, uint16_t *fb) {

@@ -11,6 +11,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_psram.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -91,6 +92,9 @@ void app_main(void) {
         bool frame_vector_ready = false;
         bool live_video_ready = false;
         uint64_t last_presented_irq = 0;
+        uint64_t last_perf_insn = 0;
+        uint64_t last_perf_irq = 0;
+        int64_t last_perf_us = esp_timer_get_time();
         bool present_due = false;
         for (unsigned frame = 0;; frame++) {
             uint32_t vram0_nz = 0;
@@ -108,7 +112,7 @@ void app_main(void) {
                     if (in_main_loop) {
                         main_loop_seen = true;
                         rtype_i86_complete_frame_if_idle(&cpu);
-                        if (cpu.interrupt_count > 0 && cpu.interrupt_count >= last_presented_irq + 8u) {
+                        if (cpu.interrupt_count > 0 && cpu.interrupt_count >= last_presented_irq + 16u) {
                             present_due = true;
                             break;
                         }
@@ -142,15 +146,22 @@ void app_main(void) {
                 ESP_LOGE(TAG, "no-framebuffer present failed: %s", esp_err_to_name(err));
                 rtype_display_heartbeat_loop();
             }
-            if ((frame & 0x3fu) == 0 && cpu_running) {
-                ESP_LOGI(TAG, "CYD CPU pc=0x%05" PRIx32 " insn=%llu irq=%llu game_frame=0x%04x vram=%u/%u spr=%u pal=%u/%u video_off=%d live=%d",
-                         rtype_i86_pc(&cpu), (unsigned long long)cpu.insn,
-                         (unsigned long long)cpu.interrupt_count,
-                         (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
-                         (unsigned)vram0_nz, (unsigned)vram1_nz, (unsigned)spr_nz,
-                         (unsigned)count_palette_nonzero(&core.video, 0, 256),
-                         (unsigned)count_palette_nonzero(&core.video, 256, 512),
-                         core.video.video_off ? 1 : 0, live_video_ready ? 1 : 0);
+            if (cpu_running) {
+                int64_t now_us = esp_timer_get_time();
+                if (now_us - last_perf_us >= 5000000) {
+                    uint64_t dinsn = cpu.insn - last_perf_insn;
+                    uint64_t dirq = cpu.interrupt_count - last_perf_irq;
+                    uint64_t dt_us = (uint64_t)(now_us - last_perf_us);
+                    ESP_LOGI(TAG, "CYD PERF pc=0x%05" PRIx32 " ips=%llu irq_s=%llu game_frame=0x%04x live=%d vram=%u/%u spr=%u",
+                             rtype_i86_pc(&cpu),
+                             (unsigned long long)((dinsn * 1000000ull) / dt_us),
+                             (unsigned long long)((dirq * 1000000ull) / dt_us),
+                             (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
+                             live_video_ready ? 1 : 0, (unsigned)vram0_nz, (unsigned)vram1_nz, (unsigned)spr_nz);
+                    last_perf_insn = cpu.insn;
+                    last_perf_irq = cpu.interrupt_count;
+                    last_perf_us = now_us;
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(1));
         }

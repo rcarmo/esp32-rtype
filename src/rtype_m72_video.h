@@ -38,5 +38,7 @@ void rtype_m72_video_render_cyd_columns(const rtype_m72_video_t *video, uint16_t
                                         unsigned phys_x, unsigned cols);
 void rtype_m72_video_render_cyd_background_columns(const rtype_m72_video_t *video, uint16_t *dst,
                                                    unsigned phys_x, unsigned cols);
+void rtype_m72_video_render_cyd_composited_columns(const rtype_m72_video_t *video, uint16_t *dst,
+                                                   unsigned phys_x, unsigned cols);
 
 #endif

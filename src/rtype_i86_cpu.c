@@ -57,18 +57,9 @@ static uint16_t fetch16(rtype_i86_cpu_t *cpu) {
     return v;
 }
 
-static uint8_t *reg8(rtype_i86_cpu_t *cpu, unsigned id) {
-    uint8_t *w = (uint8_t *)cpu->r;
-    switch (id & 7u) {
-    case 0: return w + RTYPE_I86_AX * 2u;
-    case 1: return w + RTYPE_I86_CX * 2u;
-    case 2: return w + RTYPE_I86_DX * 2u;
-    case 3: return w + RTYPE_I86_BX * 2u;
-    case 4: return w + RTYPE_I86_AX * 2u + 1u;
-    case 5: return w + RTYPE_I86_CX * 2u + 1u;
-    case 6: return w + RTYPE_I86_DX * 2u + 1u;
-    default: return w + RTYPE_I86_BX * 2u + 1u;
-    }
+static inline uint8_t *reg8(rtype_i86_cpu_t *cpu, unsigned id) {
+    static const uint8_t off[8] = {0, 2, 4, 6, 1, 3, 5, 7};
+    return ((uint8_t *)cpu->r) + off[id & 7u];
 }
 
 static void set_logic8(rtype_i86_cpu_t *cpu, uint8_t v) {
@@ -283,7 +274,7 @@ static void step_group_shift16(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, 
 
 bool rtype_i86_step(rtype_i86_cpu_t *cpu) {
     if (cpu == NULL || cpu->core == NULL || cpu->halted) return false;
-    uint32_t before = rtype_i86_pc(cpu);
+    uint32_t before = 0;
     uint8_t op = fetch8(cpu);
     cpu->last_opcode = op;
     cpu->insn++;

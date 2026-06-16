@@ -197,8 +197,23 @@ void rtype_m72_core_write8(rtype_m72_core_t *core, uint32_t addr, uint8_t value)
 }
 
 void rtype_m72_core_write16(rtype_m72_core_t *core, uint32_t addr, uint16_t value) {
-    rtype_m72_core_write8(core, addr, (uint8_t)(value & 0xffu));
-    rtype_m72_core_write8(core, addr + 1u, (uint8_t)(value >> 8));
+    if (core == NULL) return;
+    addr &= 0xfffffu;
+    if (addr <= 0x3ffffu || addr >= RTYPE_M72_RESET_VECTOR_BASE) return;
+    if (core->cpu_map != NULL) {
+        core->cpu_map[addr] = (uint8_t)(value & 0xffu);
+        core->cpu_map[(addr + 1u) & 0xfffffu] = (uint8_t)(value >> 8);
+    } else if (core->sparse_mode) {
+        uint8_t *p0 = sparse_ptr_for_write(core, addr);
+        uint8_t *p1 = sparse_ptr_for_write(core, (addr + 1u) & 0xfffffu);
+        if (p0 == NULL || p1 == NULL) return;
+        *p0 = (uint8_t)(value & 0xffu);
+        *p1 = (uint8_t)(value >> 8);
+    } else {
+        return;
+    }
+    if (addr >= RTYPE_M72_PALETTE0_BASE && addr <= 0xc8bffu) refresh_palette_group(core, 0, addr);
+    if (addr >= RTYPE_M72_PALETTE1_BASE && addr <= 0xccbffu) refresh_palette_group(core, 1, addr);
 }
 
 uint16_t rtype_m72_core_in16(rtype_m72_core_t *core, uint16_t port) {

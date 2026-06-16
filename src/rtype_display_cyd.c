@@ -34,6 +34,8 @@ static uint32_t s_present_sequence;
 static volatile uint32_t s_displayed_sequence;
 static volatile uint32_t s_dropped_jobs;
 static uint32_t s_live_present_count;
+static column_range_t s_prev_sprite_ranges[RTYPE_M72_SPRITERAM_BYTES / 8u];
+static unsigned s_prev_sprite_range_count;
 
 static void clear_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
     if (w == 0 || h == 0 || s_strip == NULL) return;
@@ -169,6 +171,9 @@ static unsigned collect_sprite_column_ranges(const rtype_m72_video_t *video, col
         unsigned px1 = RTYPE_BLIT_CYD_ACTIVE_X0 + (((unsigned)src_y1 + 1u) * RTYPE_BLIT_CYD_VIEW_H + RTYPE_GAME_H - 1u) / RTYPE_GAME_H;
         if (px0 < RTYPE_BLIT_CYD_ACTIVE_X0) px0 = RTYPE_BLIT_CYD_ACTIVE_X0;
         if (px1 > RTYPE_BLIT_CYD_ACTIVE_X1) px1 = RTYPE_BLIT_CYD_ACTIVE_X1;
+        px0 &= ~1u;
+        px1 = (px1 + 1u) & ~1u;
+        if (px1 > RTYPE_BLIT_CYD_PHYS_W) px1 = RTYPE_BLIT_CYD_PHYS_W;
         if (px0 >= px1) continue;
         if (count < max_ranges) {
             ranges[count++] = (column_range_t){.x0 = (uint16_t)px0, .x1 = (uint16_t)px1};
@@ -207,13 +212,15 @@ esp_err_t rtype_display_present_boot_pattern(unsigned frame_no) {
     return ESP_OK;
 }
 
-static void draw_live_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x1, uint32_t *checksum) {
+static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x1,
+                         bool include_sprites, uint32_t *checksum) {
     if (x1 > RTYPE_BLIT_CYD_PHYS_W) x1 = RTYPE_BLIT_CYD_PHYS_W;
     if (x0 >= x1) return;
     for (unsigned x = x0; x < x1; x += s_strip_cols) {
         unsigned cols = s_strip_cols;
         if (x + cols > x1) cols = x1 - x;
-        rtype_m72_video_render_cyd_columns(video, s_strip, x, cols);
+        if (include_sprites) rtype_m72_video_render_cyd_composited_columns(video, s_strip, x, cols);
+        else rtype_m72_video_render_cyd_background_columns(video, s_strip, x, cols);
         if (checksum != NULL) {
             for (unsigned i = 0; i < cols * RTYPE_BLIT_CYD_PHYS_H; i++) {
                 *checksum = (*checksum * 33u) ^ s_strip[i];
@@ -231,10 +238,10 @@ esp_err_t rtype_display_present_m72_core(rtype_m72_core_t *core) {
     if (err != ESP_OK) return err;
 
     uint32_t checksum = 0;
-    draw_live_columns(&core->video, 0, RTYPE_BLIT_CYD_PHYS_W, &checksum);
+    draw_columns(&core->video, 0, RTYPE_BLIT_CYD_PHYS_W, true, &checksum);
 
     if ((s_live_present_count++ & 0x1fu) == 0) {
-        ESP_LOGI(TAG, "CYD live full-composite updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u",
+        ESP_LOGI(TAG, "CYD live single-pass updated_cols=%u crc=0x%08" PRIx32 " strip_cols=%u",
                  RTYPE_BLIT_CYD_PHYS_W, checksum, s_strip_cols);
     }
     return ESP_OK;
