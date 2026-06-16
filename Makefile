@@ -21,7 +21,7 @@ S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
 ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -36,6 +36,8 @@ help:
 	@echo "  make build-cyd                - build ESP32 CYD 240x320 SPI firmware (small target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target)"
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
+	@echo "  make flash-s3                 - flash ESP32-S3 firmware"
+	@echo "  make deploy-s3                - build, flash firmware/data, then smoke-test S3"
 	@echo "  make s3-fatfs-image           - build ignored 9MB S3 FAT ROM storage image"
 	@echo "  make flash-s3-data            - flash S3 maincpu + FAT ROM data partitions"
 	@echo "  make monitor                  - serial monitor"
@@ -78,6 +80,11 @@ build-tab5:
 
 flash:
 	$(PIO) run -e $(PIO_ENV) -t upload --upload-port $(SERIAL_PORT)
+
+flash-s3:
+	$(MAKE) flash PIO_ENV=$(S3_ENV) SERIAL_PORT=$(SERIAL_PORT)
+
+deploy-s3: build-s3 flash-s3 flash-s3-data smoke-s3
 
 s3-storage-root: extract-rom
 	rm -rf $(S3_FATFS_ROOT)

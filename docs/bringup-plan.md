@@ -181,10 +181,16 @@ Use exact matched comparisons for fidelity decisions. Arbitrary photos often lan
 
 ## S3 flashing notes
 
-Normal firmware flash:
+Full build/flash/data/smoke deploy:
 
 ```bash
-make flash PIO_ENV=esp32-s3-8048s043c-rtype SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+make deploy-s3 SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+```
+
+Firmware-only flash:
+
+```bash
+make flash-s3 SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 ```
 
 Data partitions must also be present after partition-layout changes or a full erase. Preferred target:

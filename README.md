@@ -6,8 +6,9 @@ Current primary target:
 
 - board/env: `esp32-s3-8048s043c-rtype`
 - firmware build: `make build-s3`
-- firmware flash: `make flash PIO_ENV=esp32-s3-8048s043c-rtype`
+- firmware flash: `make flash-s3`
 - ROM/data flash: `make flash-s3-data`
+- full deploy check: `make deploy-s3`
 - smoke test: `make smoke-s3`
 - exact host/S3 comparison: `make compare-s3-host`
 
