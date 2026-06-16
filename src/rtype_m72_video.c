@@ -340,6 +340,21 @@ static bool sprite_ram_has_nonzero(const rtype_m72_video_t *video) {
     return buffer_has_nonzero(sprite_ram, RTYPE_M72_SPRITERAM_BYTES);
 }
 
+static inline void store4_repeat_rgb565(uint16_t *dst, uint16_t px) {
+    uint32_t packed = (uint32_t)px | ((uint32_t)px << 16);
+#if defined(__XTENSA__) || defined(__xtensa__)
+    __asm__ __volatile__(
+        "s32i %0, %1, 0\n\t"
+        "s32i %0, %1, 4\n\t"
+        :
+        : "r"(packed), "r"(dst)
+        : "memory");
+#else
+    ((uint32_t *)dst)[0] = packed;
+    ((uint32_t *)dst)[1] = packed;
+#endif
+}
+
 static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *dst,
                                     unsigned phys_x, unsigned cols, bool include_sprites) {
     if (video == NULL || dst == NULL || cols == 0 || phys_x >= RTYPE_BLIT_CYD_PHYS_W) return;
@@ -358,6 +373,56 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
         if (sy[c] == 0xffffu) all_active = 0;
     }
 
+#if defined(RTYPE_BOARD_ESP32_2432S028)
+    const bool scrolling_scene = (video->scrollx[0] | video->scrollx[1] | video->scrolly[0] | video->scrolly[1]) != 0;
+    if (!include_sprites && scrolling_scene) {
+        // Gameplay/demo scroll scenes need refresh rate more than text fidelity.
+        // Full-width snapshots prevent chunk trails; sprites are overlaid later.
+        for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py += 4u) {
+            const unsigned raw_x = (unsigned)s_cyd_src_x_for_phys_y[py] + 64u;
+            uint16_t *out0 = dst + (size_t)py * cols;
+            uint16_t *out1 = (py + 1u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 1u) * cols) : out0;
+            uint16_t *out2 = (py + 2u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 2u) * cols) : out0;
+            uint16_t *out3 = (py + 3u < RTYPE_BLIT_CYD_PHYS_H) ? (dst + (size_t)(py + 3u) * cols) : out0;
+            for (unsigned c = 0; c < cols; c += 4u) {
+                uint16_t packed_px = 0;
+                if (!video->video_off && sy[c] != 0xffffu) {
+                    const unsigned raw_y = sy[c];
+                    bool hit = false;
+                    uint16_t px = 0;
+                    if (use_layer0_as_bg) {
+                        bool fg_hit = false;
+                        uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                              256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                        px = fg_hit ? fg : 0;
+                    } else {
+                        px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
+                                                     256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
+                        bool fg_hit = false;
+                        uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                              256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                        if (fg_hit) px = fg;
+                    }
+                    packed_px = rtype_blit_rgb565_identity(px);
+                }
+                if (c + 3u < cols) {
+                    store4_repeat_rgb565(out0 + c, packed_px);
+                    store4_repeat_rgb565(out1 + c, packed_px);
+                    store4_repeat_rgb565(out2 + c, packed_px);
+                    store4_repeat_rgb565(out3 + c, packed_px);
+                } else {
+                    for (unsigned dx = 0; dx < 4u && c + dx < cols; dx++) {
+                        out0[c + dx] = packed_px;
+                        out1[c + dx] = packed_px;
+                        out2[c + dx] = packed_px;
+                        out3[c + dx] = packed_px;
+                    }
+                }
+            }
+        }
+        return;
+    }
+#endif
 
     for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
         uint16_t *out = dst + (size_t)py * cols;
