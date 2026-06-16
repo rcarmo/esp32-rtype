@@ -14,7 +14,7 @@ HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
 HOST_RTYPE_INSTRUCTIONS ?= 300000000
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor capture-s3-playfield clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor capture-s3-playfield compare-s3-host clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -31,6 +31,7 @@ help:
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
 	@echo "  make monitor                  - serial monitor"
 	@echo "  make capture-s3-playfield     - capture camera frames when S3 reaches active playfield state"
+	@echo "  make compare-s3-host          - capture S3 and render exact host side-by-side comparison"
 
 inspect-rom:
 	bun tools/inspect_rtype.ts $(ROM_ZIP) $(ROM_EXTRACTED)
@@ -73,6 +74,9 @@ monitor:
 
 capture-s3-playfield:
 	/workspace/.venvs/pio/bin/python tools/capture_s3_playfield.py --port $(SERIAL_PORT)
+
+compare-s3-host:
+	/workspace/.venvs/pio/bin/python tools/compare_s3_host.py --port $(SERIAL_PORT)
 
 clean:
 	rm -rf .pio build sdkconfig sdkconfig.old roms/extracted artifacts/packed-rtype artifacts/gfx-atlas artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png
