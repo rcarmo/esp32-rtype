@@ -311,6 +311,51 @@ struct M72 {
         }
     }
 
+    void draw_tile_layer_masked(const std::vector<uint8_t> &region, uint32_t vram_base, unsigned palette_base,
+                                uint16_t sx_scroll, uint16_t sy_scroll, const uint16_t transmask_by_group[4]) {
+        for (unsigned ty = 0; ty < 64; ty++) {
+            for (unsigned tx = 0; tx < 64; tx++) {
+                uint32_t off = vram_base + ((ty * 64u + tx) * 4u);
+                uint16_t raw_code = read16(off);
+                uint16_t attr = read16(off + 2);
+                unsigned code = raw_code & 0x3fffu;
+                unsigned color = attr & 0x0fu;
+                unsigned group = (attr >> 6) & 3u;
+                uint16_t transmask = transmask_by_group[group];
+                if (transmask == 0xffffu) continue;
+                bool flipx = (raw_code & 0x4000u) != 0;
+                bool flipy = (raw_code & 0x8000u) != 0;
+                int base_x = int(tx * 8u) - int(sx_scroll & 0x1ffu);
+                int base_y = int(ty * 8u) - int(sy_scroll & 0x1ffu) - 128;
+                while (base_x < -8) base_x += 512;
+                while (base_y < -8) base_y += 512;
+                for (unsigned py = 0; py < 8; py++) {
+                    for (unsigned px = 0; px < 8; px++) {
+                        unsigned rx = flipx ? (7 - px) : px;
+                        unsigned ry = flipy ? (7 - py) : py;
+                        uint8_t pen = decode_tile_pixel(region, code, rx, ry);
+                        if (transmask & (1u << pen)) continue;
+                        uint16_t rgb = visible_color(palette_base + color * 16u + pen, pen);
+                        if (pen != 0) render_tile_pixels++;
+                        if (put_pixel(base_x + int(px), base_y + int(py), rgb) && pen != 0) render_visible_tile_pixels++;
+                    }
+                }
+            }
+        }
+    }
+
+    void draw_m72_mame_tile_layers() {
+        static const uint16_t fg_layer1_low[4]  = {0x0001u, 0xff01u, 0xffffu, 0xffffu};
+        static const uint16_t fg_layer0_high[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
+        static const uint16_t bg_layer1_low[4]  = {0x0000u, 0xff00u, 0x0000u, 0xfffeu};
+        static const uint16_t bg_layer0_high[4] = {0xffffu, 0x00ffu, 0xffffu, 0x0001u};
+
+        draw_tile_layer_masked(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], bg_layer1_low);
+        draw_tile_layer_masked(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], fg_layer1_low);
+        draw_tile_layer_masked(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], bg_layer0_high);
+        draw_tile_layer_masked(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], fg_layer0_high);
+    }
+
     void draw_sprites() {
         for (int offs = 0x400 - 8; offs >= 0; offs -= 8) {
             const uint8_t *sp = sprite_buffer.data() + offs;
@@ -380,8 +425,7 @@ struct M72 {
         if (seed_if_blank && !any_vram) seed_static_probe_vram();
         std::fill(framebuffer.begin(), framebuffer.end(), video_off ? 0 : rgb565(4, 8, 16));
         if (video_off) return;
-        draw_tile_layer(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], false); // BG from Bx
-        draw_tile_layer(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], true);  // FG from Ax
+        draw_m72_mame_tile_layers();
         draw_sprites();
     }
 
