@@ -120,16 +120,30 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
 }
 
 static void rtype_display_flush_raw_color_diag(void) {
-    static const uint16_t colors[] = {0x0000, 0xf800, 0x07e0, 0x001f, 0xffff};
-    const unsigned band_w = RTYPE_BLIT_CYD_LOGICAL_W / (sizeof(colors) / sizeof(colors[0]));
+    // Large block diagnostic for the actual CYD panel format. No 1px features:
+    // only chunky blocks and 4px separators so camera blur/scaling does not
+    // obscure the intended raw RGB565 values.
+    // Intended logical landscape layout:
+    //   top:    black | red   | green   | blue
+    //   bottom: white | cyan  | magenta | yellow
+    static const uint16_t colors[2][4] = {
+        {0x0000, 0xf800, 0x07e0, 0x001f},
+        {0xffff, 0x07ff, 0xf81f, 0xffe0},
+    };
+    const unsigned cell_w = RTYPE_BLIT_CYD_LOGICAL_W / 4u;
+    const unsigned cell_h = RTYPE_BLIT_CYD_LOGICAL_H / 2u;
     for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
         unsigned rows = s_strip_rows;
         if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
         for (unsigned row = 0; row < rows; row++) {
+            const unsigned yy = y + row;
             for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) {
-                unsigned band = x / band_w;
-                if (band >= sizeof(colors) / sizeof(colors[0])) band = (sizeof(colors) / sizeof(colors[0])) - 1;
-                s_strip[(size_t)row * RTYPE_BLIT_CYD_LOGICAL_W + x] = colors[band];
+                const unsigned cx = x / cell_w;
+                const unsigned cy = yy / cell_h;
+                const unsigned lx = x % cell_w;
+                const unsigned ly = yy % cell_h;
+                uint16_t c = (cx < 4u && cy < 2u) ? colors[cy][cx] : 0x0000;
+                s_strip[(size_t)row * RTYPE_BLIT_CYD_LOGICAL_W + x] = c;
             }
         }
         lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
