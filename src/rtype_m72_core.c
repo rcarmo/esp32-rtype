@@ -52,7 +52,9 @@ esp_err_t rtype_m72_core_init(rtype_m72_core_t *core) {
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->palette1_ram, 0x0c00u, "m72-pal1"), TAG, "pal1 alloc");
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->vram0, RTYPE_M72_VRAM_BYTES, "m72-vram0"), TAG, "vram0 alloc");
     ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->vram1, RTYPE_M72_VRAM_BYTES, "m72-vram1"), TAG, "vram1 alloc");
-    ESP_RETURN_ON_ERROR(alloc_sparse_region(&core->sound_ram, 0x10000u, "m72-sound"), TAG, "sound alloc");
+    // Display-only CYD build does not emulate the sound CPU/RAM. Leave this
+    // region unallocated to make room for a full-width LCD DMA buffer.
+    core->sound_ram = NULL;
     core->video.vram0 = core->vram0;
     core->video.vram1 = core->vram1;
     core->video.spriteram = core->sprite_ram;
@@ -141,7 +143,7 @@ static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram[addr - RTYPE_M72_PALETTE1_BASE];
     if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
     if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
-    if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE];
+    if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE] : 0xff;
     return 0xff;
 }
 
@@ -175,7 +177,7 @@ static uint8_t *sparse_ptr_for_write(rtype_m72_core_t *core, uint32_t addr) {
     if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram + (addr - RTYPE_M72_PALETTE1_BASE);
     if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0 + (addr - RTYPE_M72_VRAM0_BASE);
     if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1 + (addr - RTYPE_M72_VRAM1_BASE);
-    if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram + (addr - RTYPE_M72_SOUND_RAM_BASE);
+    if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram + (addr - RTYPE_M72_SOUND_RAM_BASE) : NULL;
     return NULL;
 }
 

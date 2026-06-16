@@ -117,10 +117,9 @@ esp_err_t rtype_display_init(void) {
              RTYPE_BLIT_CYD_ACTIVE_X0, RTYPE_BLIT_CYD_ACTIVE_X1 - 1u);
     lcd_cyd_init();
 
-    // Full 240x320 (153KB) can starve the no-PSRAM sparse emulator heap on CYD.
-    // Try 120 columns (two DMA chunks) with the safe compositor; fall back if
-    // heap fragmentation prevents the allocation.
-    static const unsigned preferred_cols[] = {120u, 80u, 40u, 16u, 8u};
+    // Prefer a full physical-width DMA buffer so each snapshot is transferred
+    // as one complete panel update. Fall back if CYD heap cannot fit it.
+    static const unsigned preferred_cols[] = {RTYPE_BLIT_CYD_PHYS_W, 120u, 80u, 40u, 16u, 8u};
     for (unsigned i = 0; i < sizeof(preferred_cols) / sizeof(preferred_cols[0]); i++) {
         s_strip_cols = preferred_cols[i];
         s_strip = (uint16_t *)heap_caps_malloc((size_t)s_strip_cols * RTYPE_BLIT_CYD_PHYS_H * sizeof(uint16_t),
