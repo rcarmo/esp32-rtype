@@ -1,5 +1,7 @@
 #include "rtype_i86_cpu.h"
 
+#include "esp_attr.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -343,7 +345,7 @@ static void step_group_shift16(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, 
     if (mod == 3) cpu->r[rm] = res; else ww(cpu, a, res);
 }
 
-bool rtype_i86_step(rtype_i86_cpu_t *cpu) {
+IRAM_ATTR bool rtype_i86_step(rtype_i86_cpu_t *cpu) {
     if (cpu == NULL || cpu->core == NULL || cpu->halted) return false;
     uint32_t before = 0;
     uint8_t op = fetch8(cpu);
