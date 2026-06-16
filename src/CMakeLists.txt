@@ -3,6 +3,7 @@ set(RTYPE_SOURCES
     "rtype_rom.c"
     "rtype_video.c"
         "rtype_blit.c"
+        "rtype_cyd_frames.c"
         "rtype_m72_video.c"
         "rtype_m72_core.c"
         "rtype_i86_cpu.c"

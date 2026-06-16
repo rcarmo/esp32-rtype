@@ -102,3 +102,9 @@ The hot loop then performs only indexed loads, pointer arithmetic, and packed RG
 - Current diagnostic draws raw RGB565 color bars full-screen for the first few seconds, then switches to the no-framebuffer procedural pattern.
 - Camera confirmed full-screen hardware landscape fill on the plugged-in ESP32-2432S028.
 - If the physical module is flipped, adjust MADCTL mirror bits in `lib/lcd_cyd/lcd_cyd.c`; do not change the blitter.
+
+## Embedded real-frame CYD path
+
+- While the no-PSRAM live strip renderer is still pending, CYD can now display a full-screen real R-Type frame using `src/rtype_cyd_frames.c`.
+- The embedded frame is pre-scaled to `320x240` RGB565 from the host real-palette output and drawn through the same hardware-landscape strip path.
+- This is a board/display validation step: it proves the plugged-in ESP32-2432S028 can show a real R-Type frame with the current ILI9341 format/orientation, without allocating the 196KB source framebuffer.

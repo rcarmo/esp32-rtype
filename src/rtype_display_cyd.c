@@ -1,6 +1,7 @@
 #include "rtype_display.h"
 #include "rtype_blit.h"
 #include "rtype_board.h"
+#include "rtype_cyd_frames.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -119,6 +120,26 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
     return rtype_display_init();
 }
 
+static void rtype_display_flush_embedded_game_frame(unsigned frame_no) {
+    // Full-screen 320x240 CYD frame, pre-scaled from host R-Type output. Use a
+    // single frame while validating colors/orientation to avoid SPI tearing.
+    (void)frame_no;
+    const uint16_t *frame = rtype_cyd_frame_600m;
+    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
+        unsigned rows = s_strip_rows;
+        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
+        const uint16_t *src = frame + (size_t)y * RTYPE_CYD_FRAME_W;
+        for (unsigned row = 0; row < rows; row++) {
+            uint16_t *dst = s_strip + (size_t)row * RTYPE_BLIT_CYD_LOGICAL_W;
+            const uint16_t *s = src + (size_t)row * RTYPE_CYD_FRAME_W;
+            for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) dst[x] = s[x];
+        }
+        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
+                        (const uint8_t *)s_strip);
+    }
+    lcd_wait_trans_complete();
+}
+
 static void rtype_display_flush_raw_color_diag(void) {
     // Large block diagnostic for the actual CYD panel format. No 1px features:
     // only chunky blocks and 4px separators so camera blur/scaling does not
@@ -153,18 +174,9 @@ static void rtype_display_flush_raw_color_diag(void) {
 }
 
 static void rtype_display_flush_boot_pattern_blocking(unsigned frame_no) {
-    if (frame_no < 120u) {
-        rtype_display_flush_raw_color_diag();
-        return;
-    }
-    for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
-        unsigned rows = s_strip_rows;
-        if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
-        rtype_blit_cyd_landscape_boot_pattern_strip_320x213(s_strip, y, rows, frame_no);
-        lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
-                        (const uint8_t *)s_strip);
-    }
-    lcd_wait_trans_complete();
+    (void)rtype_display_flush_raw_color_diag;
+    (void)rtype_blit_cyd_landscape_boot_pattern_strip_320x213;
+    rtype_display_flush_embedded_game_frame(frame_no);
 }
 
 esp_err_t rtype_display_present_boot_pattern(unsigned frame_no) {
