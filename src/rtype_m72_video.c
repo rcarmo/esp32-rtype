@@ -484,11 +484,6 @@ static void overlay_sprite_to_cyd_columns(const rtype_m72_video_t *video, uint16
                     unsigned pi = color * 16u + pen;
                     uint16_t out = rtype_blit_rgb565_identity(visible_color(video->palette[pi & 0x1ffu], pi, pen));
                     dst[(size_t)phys_y * cols + local_col] = out;
-                    if (local_col + 1u < cols) dst[(size_t)phys_y * cols + local_col + 1u] = out;
-                    if (phys_y + 1u < RTYPE_BLIT_CYD_PHYS_H) {
-                        dst[(size_t)(phys_y + 1u) * cols + local_col] = out;
-                        if (local_col + 1u < cols) dst[(size_t)(phys_y + 1u) * cols + local_col + 1u] = out;
-                    }
                 }
             }
         }

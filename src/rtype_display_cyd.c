@@ -273,7 +273,7 @@ static void draw_columns(const rtype_m72_video_t *video, unsigned x0, unsigned x
     for (unsigned x = x0; x < x1; x += s_strip_cols) {
         unsigned cols = s_strip_cols;
         if (x + cols > x1) cols = x1 - x;
-        if (include_sprites) rtype_m72_video_render_cyd_columns(video, s_strip, x, cols);
+        if (include_sprites) rtype_m72_video_render_cyd_composited_columns(video, s_strip, x, cols);
         else rtype_m72_video_render_cyd_background_columns(video, s_strip, x, cols);
         if (checksum != NULL) {
             for (unsigned i = 0; i < cols * RTYPE_BLIT_CYD_PHYS_H; i++) {
