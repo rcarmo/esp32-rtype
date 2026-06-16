@@ -154,3 +154,50 @@ void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *
         if (c < cols) out[c] = src[(size_t)sy[c] * RTYPE_BLIT_SRC_W + sx];
     }
 }
+
+static inline uint16_t boot_pattern_pixel(unsigned sx, unsigned sy, unsigned frame_no) {
+    uint8_t r = (uint8_t)((sx * 255u) / (RTYPE_BLIT_SRC_W - 1u));
+    uint8_t g = (uint8_t)((sy * 255u) / (RTYPE_BLIT_SRC_H - 1u));
+    uint8_t b = (uint8_t)((frame_no * 3u + sx / 8u + sy / 8u) & 0xffu);
+    if (sx < 4u || sy < 4u || sx >= RTYPE_BLIT_SRC_W - 4u || sy >= RTYPE_BLIT_SRC_H - 4u) {
+        r = g = b = 255;
+    }
+    if (((sx / 16u) + (sy / 16u) + (frame_no / 15u)) & 1u) {
+        b = (uint8_t)(255u - b);
+    }
+    return (uint16_t)(((uint16_t)(r & 0xf8u) << 8) |
+                      ((uint16_t)(g & 0xfcu) << 3) |
+                      ((uint16_t)b >> 3));
+}
+
+void rtype_blit_cyd_rotate_boot_pattern_columns_320x213(uint16_t *dst, unsigned phys_x,
+                                                        unsigned cols, unsigned frame_no) {
+    if (dst == NULL || cols == 0 || phys_x >= RTYPE_BLIT_CYD_PHYS_W) return;
+    if (phys_x + cols > RTYPE_BLIT_CYD_PHYS_W) cols = RTYPE_BLIT_CYD_PHYS_W - phys_x;
+    init_cyd_rotated_luts();
+
+    uint16_t sy[16];
+    if (cols > (sizeof(sy) / sizeof(sy[0]))) return;
+    uint8_t all_active = 1;
+    for (unsigned c = 0; c < cols; c++) {
+        sy[c] = s_cyd_src_y_for_phys_x[phys_x + c];
+        if (sy[c] == 0xffffu) all_active = 0;
+    }
+
+    for (unsigned py = 0; py < RTYPE_BLIT_CYD_PHYS_H; py++) {
+        uint16_t *out = dst + (size_t)py * cols;
+        const unsigned sx = s_cyd_src_x_for_phys_y[py];
+        if (!all_active) {
+            for (unsigned c = 0; c < cols; c++) {
+                out[c] = (sy[c] == 0xffffu) ? 0 : boot_pattern_pixel(sx, sy[c], frame_no);
+            }
+            continue;
+        }
+        unsigned c = 0;
+        for (; c + 1u < cols; c += 2u) {
+            store2_rgb565(out + c, boot_pattern_pixel(sx, sy[c], frame_no),
+                          boot_pattern_pixel(sx, sy[c + 1u], frame_no));
+        }
+        if (c < cols) out[c] = boot_pattern_pixel(sx, sy[c], frame_no);
+    }
+}

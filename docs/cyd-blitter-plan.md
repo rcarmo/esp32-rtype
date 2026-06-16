@@ -88,3 +88,9 @@ phys_x[0..239] -> src_y[0..255] or side-bar marker
 ```
 
 The hot loop then performs only indexed loads, pointer arithmetic, and packed RGB565 stores.
+
+## No-framebuffer CYD path
+
+- On ESP32-2432S028, allocation of a full `384x256xRGB565` source framebuffer fails because the board has no PSRAM and the largest heap block is too small.
+- `rtype_display_present_boot_pattern()` now generates the rotated/downsampled CYD columns directly into the SPI strip buffer, without a full source framebuffer.
+- This validates the board-specific no-PSRAM display architecture; the next step is replacing the procedural source with direct M72 tile/sprite strip rendering.

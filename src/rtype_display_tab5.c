@@ -110,6 +110,11 @@ esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned wid
     return ESP_OK;
 }
 
+esp_err_t rtype_display_present_boot_pattern(unsigned frame_no) {
+    (void)frame_no;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
 _Noreturn void rtype_display_heartbeat_loop(void) {
     uint8_t levels[] = {30, 100, 60, 100};
     unsigned i = 0;

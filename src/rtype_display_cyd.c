@@ -120,6 +120,23 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
     return rtype_display_init();
 }
 
+static void rtype_display_flush_boot_pattern_blocking(unsigned frame_no) {
+    for (unsigned x = RTYPE_BLIT_CYD_ACTIVE_X0; x < RTYPE_BLIT_CYD_ACTIVE_X1; x += s_strip_cols) {
+        unsigned cols = s_strip_cols;
+        if (x + cols > RTYPE_BLIT_CYD_ACTIVE_X1) cols = RTYPE_BLIT_CYD_ACTIVE_X1 - x;
+        rtype_blit_cyd_rotate_boot_pattern_columns_320x213(s_strip, x, cols, frame_no);
+        lcd_draw_bitmap((uint16_t)x, 0, (uint16_t)cols, RTYPE_BLIT_CYD_PHYS_H, (const uint8_t *)s_strip);
+    }
+    lcd_wait_trans_complete();
+}
+
+esp_err_t rtype_display_present_boot_pattern(unsigned frame_no) {
+    esp_err_t err = rtype_display_init();
+    if (err != ESP_OK) return err;
+    rtype_display_flush_boot_pattern_blocking(frame_no);
+    return ESP_OK;
+}
+
 esp_err_t rtype_display_present_rgb565(const uint16_t *framebuffer, unsigned width, unsigned height) {
     if (framebuffer == NULL || width != RTYPE_GAME_W || height != RTYPE_GAME_H) return ESP_ERR_INVALID_ARG;
     esp_err_t err = rtype_display_init();

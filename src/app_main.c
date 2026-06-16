@@ -48,8 +48,15 @@ void app_main(void) {
 
     uint16_t *fb = rtype_video_alloc_framebuffer();
     if (fb == NULL) {
-        ESP_LOGE(TAG, "no framebuffer; leaving brightness heartbeat active");
-        rtype_display_heartbeat_loop();
+        ESP_LOGW(TAG, "no full source framebuffer; using board-specific no-framebuffer display path");
+        for (unsigned frame = 0;; frame++) {
+            esp_err_t err = rtype_display_present_boot_pattern(frame);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "no-framebuffer present failed: %s", esp_err_to_name(err));
+                rtype_display_heartbeat_loop();
+            }
+            vTaskDelay(pdMS_TO_TICKS(33));
+        }
     }
     uint16_t *fb_next = rtype_video_alloc_framebuffer();
     if (fb_next != NULL) {

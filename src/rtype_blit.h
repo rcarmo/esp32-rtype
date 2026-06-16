@@ -25,5 +25,7 @@ void rtype_blit_cyd_fill_border_strip(uint16_t *dst, unsigned dst_y, unsigned ro
 void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsigned dst_y, unsigned rows);
 void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *dst,
                                                  unsigned phys_x, unsigned cols);
+void rtype_blit_cyd_rotate_boot_pattern_columns_320x213(uint16_t *dst, unsigned phys_x,
+                                                        unsigned cols, unsigned frame_no);
 
 #endif
