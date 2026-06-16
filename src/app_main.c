@@ -113,7 +113,8 @@ void app_main(void) {
                             break;
                         }
                     }
-                    if (main_loop_seen && in_main_loop && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0 && cpu.insn >= next_vblank) {
+                    if (main_loop_seen && in_main_loop && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0) {
+                        if (cpu.insn < next_vblank) cpu.insn = next_vblank;
                         rtype_i86_interrupt(&cpu, 0x20);
                         next_vblank += 120000;
                     }
