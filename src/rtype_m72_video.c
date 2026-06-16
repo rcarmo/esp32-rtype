@@ -483,6 +483,18 @@ static void overlay_sprite_to_cyd_columns(const rtype_m72_video_t *video, uint16
     unsigned w = 1u << ((attr >> 14) & 3u);
     unsigned h = 1u << ((attr >> 12) & 3u);
     sy -= (int)(16u * h);
+
+    int src_x0 = sx - 64;
+    int src_x1 = src_x0 + (int)(16u * w) - 1;
+    int src_y0 = sy;
+    int src_y1 = sy + (int)(16u * h) - 1;
+    if (src_x1 < 0 || src_x0 >= (int)RTYPE_GAME_W || src_y1 < 0 || src_y0 >= (int)RTYPE_GAME_H) return;
+    if (src_y0 < 0) src_y0 = 0;
+    if (src_y1 >= (int)RTYPE_GAME_H) src_y1 = (int)RTYPE_GAME_H - 1;
+    unsigned sprite_col0 = RTYPE_BLIT_CYD_ACTIVE_X0 + ((unsigned)src_y0 * RTYPE_BLIT_CYD_VIEW_H) / RTYPE_GAME_H;
+    unsigned sprite_col1 = RTYPE_BLIT_CYD_ACTIVE_X0 + (((unsigned)src_y1 + 1u) * RTYPE_BLIT_CYD_VIEW_H + RTYPE_GAME_H - 1u) / RTYPE_GAME_H;
+    if (sprite_col0 >= chunk_x + cols || sprite_col1 <= chunk_x) return;
+
     unsigned color = attr & 0x0fu;
 
     for (unsigned cell_y = 0; cell_y < h; cell_y++) {
