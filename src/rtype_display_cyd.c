@@ -32,7 +32,7 @@ static volatile uint32_t s_dropped_jobs;
 static void fill_strip(uint16_t color, unsigned rows) {
     for (unsigned y = 0; y < rows; y++) {
         for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) {
-            s_strip[(size_t)y * RTYPE_BLIT_CYD_LOGICAL_W + x] = color;
+            s_strip[(size_t)y * RTYPE_BLIT_CYD_LOGICAL_W + x] = rtype_blit_rgb565_identity(color);
         }
     }
 }
@@ -121,18 +121,22 @@ esp_err_t rtype_display_set_brightness(uint8_t percent) {
 }
 
 static void rtype_display_flush_embedded_game_frame(unsigned frame_no) {
-    // Full-screen 320x240 CYD frame, pre-scaled from host R-Type output. Use a
-    // single frame while validating colors/orientation to avoid SPI tearing.
+    // Aspect-correct 320x213 CYD frame, pre-scaled from host R-Type output,
+    // centered in hardware landscape 320x240 with black bars.
     (void)frame_no;
     const uint16_t *frame = rtype_cyd_frame_600m;
     for (unsigned y = 0; y < RTYPE_BLIT_CYD_LOGICAL_H; y += s_strip_rows) {
         unsigned rows = s_strip_rows;
         if (y + rows > RTYPE_BLIT_CYD_LOGICAL_H) rows = RTYPE_BLIT_CYD_LOGICAL_H - y;
-        const uint16_t *src = frame + (size_t)y * RTYPE_CYD_FRAME_W;
         for (unsigned row = 0; row < rows; row++) {
+            const unsigned yy = y + row;
             uint16_t *dst = s_strip + (size_t)row * RTYPE_BLIT_CYD_LOGICAL_W;
-            const uint16_t *s = src + (size_t)row * RTYPE_CYD_FRAME_W;
-            for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) dst[x] = s[x];
+            if (yy < RTYPE_BLIT_CYD_VIEW_Y || yy >= RTYPE_BLIT_CYD_VIEW_Y + RTYPE_CYD_FRAME_H) {
+                for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) dst[x] = 0;
+            } else {
+                const uint16_t *src = frame + (size_t)(yy - RTYPE_BLIT_CYD_VIEW_Y) * RTYPE_CYD_FRAME_W;
+                for (unsigned x = 0; x < RTYPE_BLIT_CYD_LOGICAL_W; x++) dst[x] = rtype_blit_rgb565_identity(src[x]);
+            }
         }
         lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,
                         (const uint8_t *)s_strip);
@@ -164,7 +168,7 @@ static void rtype_display_flush_raw_color_diag(void) {
                 const unsigned lx = x % cell_w;
                 const unsigned ly = yy % cell_h;
                 uint16_t c = (cx < 4u && cy < 2u) ? colors[cy][cx] : 0x0000;
-                s_strip[(size_t)row * RTYPE_BLIT_CYD_LOGICAL_W + x] = c;
+                s_strip[(size_t)row * RTYPE_BLIT_CYD_LOGICAL_W + x] = rtype_blit_rgb565_identity(c);
             }
         }
         lcd_draw_bitmap(0, (uint16_t)y, RTYPE_BLIT_CYD_LOGICAL_W, (uint16_t)rows,

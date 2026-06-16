@@ -2,6 +2,7 @@
 #define RTYPE_M72_CORE_H
 
 #include "esp_err.h"
+#include "esp_partition.h"
 #include "rtype_m72_video.h"
 
 #include <stddef.h>
@@ -21,6 +22,17 @@
 typedef struct {
     uint8_t *cpu_map;
     size_t cpu_map_size;
+    uint8_t *work_ram;
+    uint8_t *sprite_ram;
+    uint8_t *palette0_ram;
+    uint8_t *palette1_ram;
+    uint8_t *vram0;
+    uint8_t *vram1;
+    uint8_t *sound_ram;
+    const uint8_t *rom_map;
+    size_t rom_map_size;
+    esp_partition_mmap_handle_t rom_mmap_handle;
+    uint8_t sparse_mode;
     rtype_m72_video_t video;
     uint64_t mem_reads;
     uint64_t mem_writes;
@@ -37,6 +49,7 @@ void rtype_m72_core_free(rtype_m72_core_t *core);
 esp_err_t rtype_m72_core_map_maincpu(rtype_m72_core_t *core,
                                      const uint8_t *low_pair, size_t low_pair_size,
                                      const uint8_t *high_pair, size_t high_pair_size);
+esp_err_t rtype_m72_core_map_maincpu_partition(rtype_m72_core_t *core, const char *label);
 uint8_t rtype_m72_core_read8(rtype_m72_core_t *core, uint32_t addr);
 uint16_t rtype_m72_core_read16(rtype_m72_core_t *core, uint32_t addr);
 void rtype_m72_core_write8(rtype_m72_core_t *core, uint32_t addr, uint8_t value);

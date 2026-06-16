@@ -4,6 +4,7 @@
 #include "rtype_m72_video.h"
 #include "rtype_rom.h"
 #include "rtype_video.h"
+#include "rtype_i86_cpu.h"
 
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -46,14 +47,55 @@ void app_main(void) {
     ESP_ERROR_CHECK(rtype_display_init());
     ESP_ERROR_CHECK(rtype_display_set_brightness(100));
 
+    rtype_m72_core_t core;
+    esp_err_t core_err = rtype_m72_core_init(&core);
+    esp_err_t cpu_rom_err = ESP_FAIL;
+    if (core_err != ESP_OK) {
+        ESP_LOGE(TAG, "no M72 core state (%s); display-only fallback active", esp_err_to_name(core_err));
+    } else {
+#if defined(RTYPE_BOARD_ESP32_2432S028)
+        cpu_rom_err = rtype_m72_core_map_maincpu_partition(&core, "storage");
+        if (cpu_rom_err != ESP_OK) {
+            ESP_LOGW(TAG, "main CPU ROM partition unavailable (%s); CYD will display embedded frame only", esp_err_to_name(cpu_rom_err));
+        } else {
+            ESP_LOGI(TAG, "CYD sparse M72 CPU core mapped from storage partition");
+        }
+#else
+        ESP_LOGI(TAG, "Milestone graphics: M72 core + tile/sprite renderer active");
+        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
+        if (rom_err != ESP_OK) {
+            ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
+        }
+#endif
+    }
+
     uint16_t *fb = rtype_video_alloc_framebuffer();
     if (fb == NULL) {
         ESP_LOGW(TAG, "no full source framebuffer; using board-specific no-framebuffer display path");
+        rtype_i86_cpu_t cpu;
+        bool cpu_running = (core_err == ESP_OK && cpu_rom_err == ESP_OK);
+        if (cpu_running) {
+            rtype_i86_reset(&cpu, &core);
+            ESP_LOGI(TAG, "CYD CPU backend starting without full framebuffer");
+        }
         for (unsigned frame = 0;; frame++) {
+            if (cpu_running) {
+                (void)rtype_i86_run(&cpu, 20000);
+                if (cpu.halted) {
+                    ESP_LOGW(TAG, "CYD CPU halted pc=0x%05" PRIx32 " opcode=0x%02x reason=%s",
+                             rtype_i86_pc(&cpu), cpu.last_opcode, cpu.stop_reason);
+                    cpu_running = false;
+                }
+            }
             esp_err_t err = rtype_display_present_boot_pattern(frame);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "no-framebuffer present failed: %s", esp_err_to_name(err));
                 rtype_display_heartbeat_loop();
+            }
+            if ((frame & 0x3fu) == 0 && cpu_running) {
+                ESP_LOGI(TAG, "CYD CPU pc=0x%05" PRIx32 " insn=%llu writes=%llu ports=%llu",
+                         rtype_i86_pc(&cpu), (unsigned long long)cpu.insn,
+                         (unsigned long long)core.mem_writes, (unsigned long long)core.port_writes);
             }
             vTaskDelay(pdMS_TO_TICKS(33));
         }
@@ -63,18 +105,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "double framebuffer enabled for async display handoff");
     } else {
         ESP_LOGW(TAG, "single framebuffer only; display producer will throttle after present");
-    }
-
-    rtype_m72_core_t core;
-    esp_err_t core_err = rtype_m72_core_init(&core);
-    if (core_err != ESP_OK) {
-        ESP_LOGE(TAG, "no M72 core state (%s); falling back to animated framebuffer pattern", esp_err_to_name(core_err));
-    } else {
-        ESP_LOGI(TAG, "Milestone S3 graphics: M72 core + tile/sprite renderer active");
-        esp_err_t rom_err = rtype_rom_load_m72_graphics("/spiflash/rtype", &core.video);
-        if (rom_err != ESP_OK) {
-            ESP_LOGW(TAG, "external graphics ROMs not loaded (%s); using deterministic fallback pixels", esp_err_to_name(rom_err));
-        }
     }
 
     for (unsigned frame = 0;; frame++) {
