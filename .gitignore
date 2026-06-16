@@ -11,6 +11,7 @@ roms/*.zip
 roms/*.bin
 roms/*.rom
 roms/extracted/
+artifacts/
 artifacts/*.bin
 artifacts/*.png
 artifacts/*.ppm
