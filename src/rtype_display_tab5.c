@@ -115,6 +115,11 @@ esp_err_t rtype_display_present_boot_pattern(unsigned frame_no) {
     return ESP_ERR_NOT_SUPPORTED;
 }
 
+esp_err_t rtype_display_present_m72_core(rtype_m72_core_t *core) {
+    (void)core;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
 _Noreturn void rtype_display_heartbeat_loop(void) {
     uint8_t levels[] = {30, 100, 60, 100};
     unsigned i = 0;

@@ -9,12 +9,31 @@ static uint32_t lin(const rtype_i86_cpu_t *cpu, uint16_t seg, uint16_t off) {
     return (((uint32_t)seg << 4) + off) & 0xfffffu;
 }
 
-static uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
-    return rtype_m72_core_read8(cpu->core, addr);
+static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
+    rtype_m72_core_t *core = cpu->core;
+    if (core == NULL) return 0xff;
+    addr &= 0xfffffu;
+    if (core->cpu_map != NULL) return core->cpu_map[addr];
+    if (core->sparse_mode) {
+        if (core->rom_map != NULL) {
+            if (addr <= 0x3ffffu) return core->rom_map[addr];
+            if (addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
+        }
+        if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
+        if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
+        if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
+        if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram[addr - RTYPE_M72_PALETTE1_BASE];
+        if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
+        if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
+        if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE];
+    }
+    return 0xff;
 }
 
-static uint16_t rw(rtype_i86_cpu_t *cpu, uint32_t addr) {
-    return rtype_m72_core_read16(cpu->core, addr);
+static inline uint16_t rw(rtype_i86_cpu_t *cpu, uint32_t addr) {
+    uint16_t lo = rb(cpu, addr);
+    uint16_t hi = rb(cpu, addr + 1u);
+    return (uint16_t)(lo | (hi << 8));
 }
 
 static void wb(rtype_i86_cpu_t *cpu, uint32_t addr, uint8_t v) {
@@ -25,8 +44,9 @@ static void ww(rtype_i86_cpu_t *cpu, uint32_t addr, uint16_t v) {
     rtype_m72_core_write16(cpu->core, addr, v);
 }
 
-static uint8_t fetch8(rtype_i86_cpu_t *cpu) {
-    uint8_t v = rb(cpu, rtype_i86_pc(cpu));
+static inline uint8_t fetch8(rtype_i86_cpu_t *cpu) {
+    uint32_t pc = (((uint32_t)cpu->s[RTYPE_I86_CS] << 4) + cpu->ip) & 0xfffffu;
+    uint8_t v = rb(cpu, pc);
     cpu->ip++;
     return v;
 }
@@ -205,6 +225,22 @@ static void cpu_interrupt(rtype_i86_cpu_t *cpu, uint8_t vector) {
     cpu->interrupt_count++;
     cpu->ip = rtype_m72_core_read16(cpu->core, (uint32_t)vector * 4u);
     cpu->s[RTYPE_I86_CS] = rtype_m72_core_read16(cpu->core, (uint32_t)vector * 4u + 2u);
+}
+
+void rtype_i86_interrupt(rtype_i86_cpu_t *cpu, uint8_t vector) {
+    if (cpu == NULL || cpu->core == NULL) return;
+    cpu_interrupt(cpu, vector);
+}
+
+void rtype_i86_complete_frame_if_idle(rtype_i86_cpu_t *cpu) {
+    if (cpu == NULL) return;
+    if (cpu->interrupt_depth > 0 && cpu->s[RTYPE_I86_CS] == 0x0040 &&
+        cpu->ip >= 0x00d0 && cpu->ip <= 0x00f8) {
+        if (cpu->pending_frame_sp_valid) cpu->r[RTYPE_I86_SP] = cpu->pending_frame_sp;
+        else cpu->r[RTYPE_I86_SP] = (uint16_t)(cpu->r[RTYPE_I86_SP] + 6u * cpu->interrupt_depth);
+        cpu->interrupt_depth = 0;
+        cpu->pending_frame_sp_valid = false;
+    }
 }
 
 static void step_group_shift8(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, uint32_t before) {

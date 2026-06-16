@@ -18,6 +18,14 @@
 
 static const char *TAG = "rtype_app";
 
+static uint32_t count_palette_nonzero(const rtype_m72_video_t *video, unsigned begin, unsigned end) {
+    if (video == NULL) return 0;
+    if (end > RTYPE_M72_PALETTE_COLORS) end = RTYPE_M72_PALETTE_COLORS;
+    uint32_t n = 0;
+    for (unsigned i = begin; i < end; i++) if (video->palette[i] != 0) n++;
+    return n;
+}
+
 static void log_system_info(void) {
     esp_chip_info_t chip = {0};
     esp_chip_info(&chip);
@@ -47,7 +55,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(rtype_display_init());
     ESP_ERROR_CHECK(rtype_display_set_brightness(100));
 
-    rtype_m72_core_t core;
+    static rtype_m72_core_t core;
     esp_err_t core_err = rtype_m72_core_init(&core);
     esp_err_t cpu_rom_err = ESP_FAIL;
     if (core_err != ESP_OK) {
@@ -78,26 +86,72 @@ void app_main(void) {
             rtype_i86_reset(&cpu, &core);
             ESP_LOGI(TAG, "CYD CPU backend starting without full framebuffer");
         }
+        uint64_t next_vblank = 120000;
+        bool main_loop_seen = false;
+        bool frame_vector_ready = false;
+        bool live_video_ready = false;
+        uint64_t last_presented_irq = 0;
+        bool present_due = false;
         for (unsigned frame = 0;; frame++) {
+            uint32_t vram0_nz = 0;
+            uint32_t vram1_nz = 0;
+            uint32_t spr_nz = 0;
+            if (cpu_running && !frame_vector_ready) {
+                frame_vector_ready = (rtype_m72_core_read16(&core, 0x20u * 4u) == 0x00fe &&
+                                      rtype_m72_core_read16(&core, 0x20u * 4u + 2u) == 0x0040);
+            }
+            present_due = false;
             if (cpu_running) {
-                (void)rtype_i86_run(&cpu, 20000);
+                uint64_t target = cpu.insn + 500000ull;
+                while (!cpu.halted && cpu.insn < target) {
+                    bool in_main_loop = (cpu.s[RTYPE_I86_CS] == 0x0040 && cpu.ip >= 0x00d0 && cpu.ip <= 0x00f8);
+                    if (in_main_loop) {
+                        main_loop_seen = true;
+                        rtype_i86_complete_frame_if_idle(&cpu);
+                        if (cpu.interrupt_count > 0 && cpu.interrupt_count >= last_presented_irq + 8u) {
+                            present_due = true;
+                            break;
+                        }
+                    }
+                    if (main_loop_seen && in_main_loop && frame_vector_ready && cpu.iff && cpu.interrupt_depth == 0 && cpu.insn >= next_vblank) {
+                        rtype_i86_interrupt(&cpu, 0x20);
+                        next_vblank += 120000;
+                    }
+                    rtype_i86_step(&cpu);
+                }
                 if (cpu.halted) {
                     ESP_LOGW(TAG, "CYD CPU halted pc=0x%05" PRIx32 " opcode=0x%02x reason=%s",
                              rtype_i86_pc(&cpu), cpu.last_opcode, cpu.stop_reason);
                     cpu_running = false;
                 }
             }
-            esp_err_t err = rtype_display_present_boot_pattern(frame);
+            if (cpu_running && (frame & 0x0fu) == 0) {
+                vram0_nz = rtype_m72_core_count_nonzero(&core, RTYPE_M72_VRAM0_BASE, RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES);
+                vram1_nz = rtype_m72_core_count_nonzero(&core, RTYPE_M72_VRAM1_BASE, RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES);
+                spr_nz = rtype_m72_core_count_nonzero(&core, RTYPE_M72_SPRITE_RAM_BASE, RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES);
+                live_video_ready = !core.video.video_off && cpu.interrupt_count > 0 &&
+                                   (vram0_nz != 0 || vram1_nz != 0 || spr_nz != 0);
+            }
+            esp_err_t err = ESP_OK;
+            if (live_video_ready && present_due) {
+                err = rtype_display_present_m72_core(&core);
+                last_presented_irq = cpu.interrupt_count;
+            }
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "no-framebuffer present failed: %s", esp_err_to_name(err));
                 rtype_display_heartbeat_loop();
             }
             if ((frame & 0x3fu) == 0 && cpu_running) {
-                ESP_LOGI(TAG, "CYD CPU pc=0x%05" PRIx32 " insn=%llu writes=%llu ports=%llu",
+                ESP_LOGI(TAG, "CYD CPU pc=0x%05" PRIx32 " insn=%llu irq=%llu game_frame=0x%04x vram=%u/%u spr=%u pal=%u/%u video_off=%d live=%d",
                          rtype_i86_pc(&cpu), (unsigned long long)cpu.insn,
-                         (unsigned long long)core.mem_writes, (unsigned long long)core.port_writes);
+                         (unsigned long long)cpu.interrupt_count,
+                         (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
+                         (unsigned)vram0_nz, (unsigned)vram1_nz, (unsigned)spr_nz,
+                         (unsigned)count_palette_nonzero(&core.video, 0, 256),
+                         (unsigned)count_palette_nonzero(&core.video, 256, 512),
+                         core.video.video_off ? 1 : 0, live_video_ready ? 1 : 0);
             }
-            vTaskDelay(pdMS_TO_TICKS(33));
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
     uint16_t *fb_next = rtype_video_alloc_framebuffer();

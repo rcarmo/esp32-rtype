@@ -38,6 +38,7 @@ extract-rom: inspect-rom
 
 pack-rom: extract-rom
 	bun tools/pack_rtype.ts $(ROM_EXTRACTED) artifacts/packed-rtype >/tmp/rtype-pack-report.json
+	bun tools/pack_cyd_storage.ts $(ROM_EXTRACTED) artifacts/packed-rtype/cyd-storage.bin >/tmp/rtype-cyd-pack-report.json
 
 gfx-atlas: extract-rom
 	bun tools/render_gfx_atlas.ts $(ROM_EXTRACTED) artifacts/gfx-atlas 1024

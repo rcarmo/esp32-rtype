@@ -51,6 +51,8 @@ typedef struct {
 void rtype_i86_reset(rtype_i86_cpu_t *cpu, rtype_m72_core_t *core);
 uint32_t rtype_i86_pc(const rtype_i86_cpu_t *cpu);
 void rtype_i86_frame_vector(rtype_i86_cpu_t *cpu, uint8_t vector);
+void rtype_i86_interrupt(rtype_i86_cpu_t *cpu, uint8_t vector);
+void rtype_i86_complete_frame_if_idle(rtype_i86_cpu_t *cpu);
 bool rtype_i86_step(rtype_i86_cpu_t *cpu);
 uint64_t rtype_i86_run(rtype_i86_cpu_t *cpu, uint64_t instruction_budget);
 

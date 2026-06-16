@@ -18,6 +18,8 @@ typedef struct {
     const uint8_t *tiles1;
     size_t tiles1_size;
     uint8_t *spriteram;
+    uint8_t sprite_buffer[RTYPE_M72_SPRITERAM_BYTES];
+    uint8_t sprite_buffer_valid;
     uint8_t *vram0;
     uint8_t *vram1;
     uint16_t palette[RTYPE_M72_PALETTE_COLORS];
@@ -30,5 +32,11 @@ uint8_t *rtype_m72_alloc_region(size_t bytes, const char *name);
 void rtype_m72_video_init(rtype_m72_video_t *video);
 void rtype_m72_video_seed_probe_scene(rtype_m72_video_t *video, unsigned frame_no);
 void rtype_m72_video_render(const rtype_m72_video_t *video, uint16_t *fb);
+void rtype_m72_video_render_cyd_strip(const rtype_m72_video_t *video, uint16_t *dst,
+                                      unsigned logical_y, unsigned rows);
+void rtype_m72_video_render_cyd_columns(const rtype_m72_video_t *video, uint16_t *dst,
+                                        unsigned phys_x, unsigned cols);
+void rtype_m72_video_render_cyd_background_columns(const rtype_m72_video_t *video, uint16_t *dst,
+                                                   unsigned phys_x, unsigned cols);
 
 #endif

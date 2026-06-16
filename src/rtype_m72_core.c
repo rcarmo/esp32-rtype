@@ -71,9 +71,9 @@ void rtype_m72_core_free(rtype_m72_core_t *core) {
     if (core->vram0 != NULL) heap_caps_free(core->vram0);
     if (core->vram1 != NULL) heap_caps_free(core->vram1);
     if (core->sound_ram != NULL) heap_caps_free(core->sound_ram);
-    if (core->video.sprites != NULL) heap_caps_free((void *)core->video.sprites);
-    if (core->video.tiles0 != NULL) heap_caps_free((void *)core->video.tiles0);
-    if (core->video.tiles1 != NULL) heap_caps_free((void *)core->video.tiles1);
+    if (!core->sparse_mode && core->video.sprites != NULL) heap_caps_free((void *)core->video.sprites);
+    if (!core->sparse_mode && core->video.tiles0 != NULL) heap_caps_free((void *)core->video.tiles0);
+    if (!core->sparse_mode && core->video.tiles1 != NULL) heap_caps_free((void *)core->video.tiles1);
     memset(core, 0, sizeof(*core));
 }
 
@@ -117,13 +117,24 @@ esp_err_t rtype_m72_core_map_maincpu_partition(rtype_m72_core_t *core, const cha
                                            &core->rom_mmap_handle), TAG, "mmap maincpu");
     core->rom_map = (const uint8_t *)mapped;
     core->rom_map_size = RTYPE_M72_CPU_MAP_BYTES;
-    ESP_LOGI(TAG, "mapped maincpu ROM partition '%s' @%p", label, mapped);
+    if (core->sparse_mode) {
+        core->video.sprites = core->rom_map + 0x40000u;
+        core->video.sprites_size = 0x80000u;
+        core->video.tiles0 = core->rom_map + 0xc0000u;
+        core->video.tiles0_size = 0x20000u;
+        core->video.tiles1 = core->rom_map + 0xe0000u;
+        core->video.tiles1_size = 0x20000u;
+    }
+    ESP_LOGI(TAG, "mapped CYD packed ROM partition '%s' @%p", label, mapped);
     return ESP_OK;
 }
 
 static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     addr &= 0xfffffu;
-    if ((addr <= 0x3ffffu || addr >= RTYPE_M72_RESET_VECTOR_BASE) && core->rom_map != NULL && addr < core->rom_map_size) return core->rom_map[addr];
+    if (core->rom_map != NULL) {
+        if (addr <= 0x3ffffu) return core->rom_map[addr];
+        if (addr >= RTYPE_M72_RESET_VECTOR_BASE) return core->rom_map[0x20000u + (addr - 0xe0000u)];
+    }
     if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
     if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
     if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
@@ -136,7 +147,6 @@ static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
 
 uint8_t rtype_m72_core_read8(rtype_m72_core_t *core, uint32_t addr) {
     if (core == NULL) return 0xff;
-    core->mem_reads++;
     if (core->cpu_map != NULL) return core->cpu_map[addr & 0xfffffu];
     if (core->sparse_mode) return sparse_read8(core, addr);
     return 0xff;
@@ -182,7 +192,6 @@ void rtype_m72_core_write8(rtype_m72_core_t *core, uint32_t addr, uint8_t value)
     } else {
         return;
     }
-    core->mem_writes++;
     if (addr >= RTYPE_M72_PALETTE0_BASE && addr <= 0xc8bffu) refresh_palette_group(core, 0, addr);
     if (addr >= RTYPE_M72_PALETTE1_BASE && addr <= 0xccbffu) refresh_palette_group(core, 1, addr);
 }
@@ -193,7 +202,6 @@ void rtype_m72_core_write16(rtype_m72_core_t *core, uint32_t addr, uint16_t valu
 }
 
 uint16_t rtype_m72_core_in16(rtype_m72_core_t *core, uint16_t port) {
-    if (core) core->port_reads++;
     switch (port & 0xffu) {
     case 0x00: return 0xffffu;
     case 0x02: return 0xffffu;
@@ -209,22 +217,30 @@ uint8_t rtype_m72_core_in8(rtype_m72_core_t *core, uint16_t port) {
     return (port & 1u) ? (uint8_t)(v >> 8) : (uint8_t)(v & 0xffu);
 }
 
+static void latch_sprites(rtype_m72_core_t *core) {
+    if (core == NULL || core->video.spriteram == NULL) return;
+    memcpy(core->video.sprite_buffer, core->video.spriteram, RTYPE_M72_SPRITERAM_BYTES);
+    core->video.sprite_buffer_valid = 1;
+}
+
 void rtype_m72_core_out8(rtype_m72_core_t *core, uint16_t port, uint8_t value) {
     if (core == NULL) return;
-    core->port_writes++;
     switch (port & 0xffu) {
     case 0x02: core->video_off = (value & 0x08u) != 0; core->video.video_off = core->video_off; break;
+    case 0x04: latch_sprites(core); break;
     default: break;
     }
 }
 
 void rtype_m72_core_out16(rtype_m72_core_t *core, uint16_t port, uint16_t value) {
     if (core == NULL) return;
-    core->port_writes++;
     switch (port & 0xffu) {
     case 0x02:
         core->video_off = (value & 0x0008u) != 0;
         core->video.video_off = core->video_off;
+        break;
+    case 0x04:
+        latch_sprites(core);
         break;
     case 0x06:
         core->raster_irq_position = (uint16_t)((value & 0x01ffu) - 128u);

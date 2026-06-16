@@ -2,11 +2,10 @@ set(RTYPE_SOURCES
     "app_main.c"
     "rtype_rom.c"
     "rtype_video.c"
-        "rtype_blit.c"
-        "rtype_cyd_frames.c"
-        "rtype_m72_video.c"
-        "rtype_m72_core.c"
-        "rtype_i86_cpu.c"
+    "rtype_blit.c"
+    "rtype_m72_video.c"
+    "rtype_m72_core.c"
+    "rtype_i86_cpu.c"
 )
 set(RTYPE_REQUIRES driver esp_psram esp_hw_support heap esp_lcd esp_timer)
 
@@ -28,3 +27,7 @@ idf_component_register(
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/include"
     REQUIRES ${RTYPE_REQUIRES}
 )
+
+if("${IDF_TARGET}" STREQUAL "esp32")
+    target_compile_options(${COMPONENT_LIB} PRIVATE -O3)
+endif()
