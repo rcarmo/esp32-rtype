@@ -112,7 +112,7 @@ void app_main(void) {
                     if (in_main_loop) {
                         main_loop_seen = true;
                         rtype_i86_complete_frame_if_idle(&cpu);
-                        if (cpu.interrupt_count > 0 && cpu.interrupt_count >= last_presented_irq + 16u) {
+                        if (cpu.interrupt_count > 0 && cpu.interrupt_count >= last_presented_irq + 8u) {
                             present_due = true;
                             break;
                         }
