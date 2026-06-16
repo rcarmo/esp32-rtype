@@ -13,8 +13,15 @@ HOST_RTYPE_HARNESS ?= $(HOST_BUILD_DIR)/rtype_host_harness
 HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
 HOST_RTYPE_INSTRUCTIONS ?= 300000000
+S3_MAINCPU_OFFSET := 0x410000
+S3_STORAGE_OFFSET := 0x510000
+S3_STORAGE_SIZE := 9437184
+S3_FATFS_ROOT := artifacts/s3-fatfs-root
+S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
+IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
+ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
 
-.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash monitor capture-s3-playfield compare-s3-host clean
+.PHONY: help inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-s3 build-cyd build-tab5 flash s3-storage-root s3-fatfs-image flash-s3-data monitor capture-s3-playfield compare-s3-host clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -29,6 +36,8 @@ help:
 	@echo "  make build-cyd                - build ESP32 CYD 240x320 SPI firmware (small target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target)"
 	@echo "  make flash                    - flash selected PIO_ENV=$(PIO_ENV)"
+	@echo "  make s3-fatfs-image           - build ignored 9MB S3 FAT ROM storage image"
+	@echo "  make flash-s3-data            - flash S3 maincpu + FAT ROM data partitions"
 	@echo "  make monitor                  - serial monitor"
 	@echo "  make capture-s3-playfield     - capture camera frames when S3 reaches active playfield state"
 	@echo "  make compare-s3-host          - capture S3 and render exact host side-by-side comparison"
@@ -69,6 +78,19 @@ build-tab5:
 flash:
 	$(PIO) run -e $(PIO_ENV) -t upload --upload-port $(SERIAL_PORT)
 
+s3-storage-root: extract-rom
+	rm -rf $(S3_FATFS_ROOT)
+	mkdir -p $(S3_FATFS_ROOT)/rtype
+	cp $(ROM_EXTRACTED)/*.bin $(S3_FATFS_ROOT)/rtype/
+
+s3-fatfs-image: s3-storage-root
+	/workspace/.venvs/pio/bin/python $(IDF_FATFS_GEN) --partition_size $(S3_STORAGE_SIZE) --output_file $(S3_FATFS_IMAGE) $(S3_FATFS_ROOT)
+
+flash-s3-data: pack-rom s3-fatfs-image
+	$(ESPTOOL) --chip esp32s3 --port $(SERIAL_PORT) --baud 460800 write-flash \
+		$(S3_MAINCPU_OFFSET) artifacts/packed-rtype/maincpu-map.bin \
+		$(S3_STORAGE_OFFSET) $(S3_FATFS_IMAGE)
+
 monitor:
 	$(PIO) device monitor -e $(PIO_ENV) --port $(SERIAL_PORT)
 
@@ -79,4 +101,4 @@ compare-s3-host:
 	/workspace/.venvs/pio/bin/python tools/compare_s3_host.py --port $(SERIAL_PORT)
 
 clean:
-	rm -rf .pio build sdkconfig sdkconfig.old roms/extracted artifacts/packed-rtype artifacts/gfx-atlas artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png
+	rm -rf .pio build sdkconfig sdkconfig.old roms/extracted artifacts/packed-rtype artifacts/gfx-atlas artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png $(S3_FATFS_ROOT) $(S3_FATFS_IMAGE)

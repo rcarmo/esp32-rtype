@@ -187,19 +187,24 @@ Normal firmware flash:
 make flash PIO_ENV=esp32-s3-8048s043c-rtype SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 ```
 
-Data partitions must also be present after partition-layout changes or a full erase:
+Data partitions must also be present after partition-layout changes or a full erase. Preferred target:
 
 ```bash
-/workspace/.venvs/pio/bin/python -m esptool \
-  --chip esp32s3 \
-  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
-  --baud 460800 \
-  write-flash \
-  0x410000 artifacts/packed-rtype/maincpu-map.bin \
-  0x510000 artifacts/s3-rtype-fatfs-wl-9m.bin
+make flash-s3-data SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 ```
 
-`artifacts/s3-rtype-fatfs-wl-9m.bin` is a generated 9MB wear-levelled FAT image containing `/rtype/*.bin` and is intentionally ignored.
+This target runs the ROM packer, rebuilds the ignored 9MB wear-levelled FAT image, and flashes:
+
+- `0x410000 artifacts/packed-rtype/maincpu-map.bin`
+- `0x510000 artifacts/s3-rtype-fatfs-wl-9m.bin`
+
+For image generation only:
+
+```bash
+make s3-fatfs-image
+```
+
+`artifacts/s3-rtype-fatfs-wl-9m.bin` is generated from `artifacts/s3-fatfs-root/rtype/*.bin` and is intentionally ignored.
 
 ## Current caveats
 
