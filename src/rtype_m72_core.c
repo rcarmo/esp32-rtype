@@ -23,6 +23,20 @@ static uint8_t pal5(uint16_t v) {
     return (uint8_t)((v << 3) | (v >> 2));
 }
 
+static uint32_t palette_byte_offset(uint32_t byte_off) {
+    uint32_t word_off = byte_off >> 1;
+    word_off &= ~0x100u; // A9 is not connected on M72 palette RAM
+    return (word_off << 1) | (byte_off & 1u);
+}
+
+static uint8_t palette_read_byte(const uint8_t *ram, uint32_t byte_off) {
+    uint32_t off = palette_byte_offset(byte_off);
+    uint8_t v = ram[off];
+    // Palette reads return the stored low 5 bits with upper bits high.
+    // In little-endian byte terms: low byte OR 0xe0, high byte 0xff.
+    return (off & 1u) ? 0xffu : (uint8_t)(v | 0xe0u);
+}
+
 static esp_err_t alloc_sparse_region(uint8_t **ptr, size_t bytes, const char *name) {
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
     // On S3, preserve the large contiguous internal block for the hot main CPU
@@ -155,8 +169,8 @@ static uint8_t sparse_read8(rtype_m72_core_t *core, uint32_t addr) {
     if (core->rom_map != NULL && addr <= 0x3ffffu) return core->rom_map[addr];
     if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
     if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
-    if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
-    if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram[addr - RTYPE_M72_PALETTE1_BASE];
+    if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return palette_read_byte(core->palette0_ram, addr - RTYPE_M72_PALETTE0_BASE);
+    if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return palette_read_byte(core->palette1_ram, addr - RTYPE_M72_PALETTE1_BASE);
     if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
     if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
     if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE] : 0xff;
@@ -190,8 +204,8 @@ static void refresh_palette_group(rtype_m72_core_t *core, unsigned group, uint32
 static uint8_t *sparse_ptr_for_write(rtype_m72_core_t *core, uint32_t addr) {
     if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram + (addr - RTYPE_M72_WORK_RAM_BASE);
     if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram + (addr - RTYPE_M72_SPRITE_RAM_BASE);
-    if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram + (addr - RTYPE_M72_PALETTE0_BASE);
-    if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram + (addr - RTYPE_M72_PALETTE1_BASE);
+    if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram + palette_byte_offset(addr - RTYPE_M72_PALETTE0_BASE);
+    if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram + palette_byte_offset(addr - RTYPE_M72_PALETTE1_BASE);
     if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0 + (addr - RTYPE_M72_VRAM0_BASE);
     if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1 + (addr - RTYPE_M72_VRAM1_BASE);
     if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram + (addr - RTYPE_M72_SOUND_RAM_BASE) : NULL;

@@ -11,6 +11,18 @@ static uint32_t lin(const rtype_i86_cpu_t *cpu, uint16_t seg, uint16_t off) {
     return (((uint32_t)seg << 4) + off) & 0xfffffu;
 }
 
+static uint32_t palette_byte_offset(uint32_t byte_off) {
+    uint32_t word_off = byte_off >> 1;
+    word_off &= ~0x100u;
+    return (word_off << 1) | (byte_off & 1u);
+}
+
+static uint8_t palette_read_byte(const uint8_t *ram, uint32_t byte_off) {
+    uint32_t off = palette_byte_offset(byte_off);
+    uint8_t v = ram[off];
+    return (off & 1u) ? 0xffu : (uint8_t)(v | 0xe0u);
+}
+
 static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
     rtype_m72_core_t *core = cpu->core;
     if (core == NULL) return 0xff;
@@ -20,8 +32,8 @@ static inline uint8_t rb(rtype_i86_cpu_t *cpu, uint32_t addr) {
         if (core->rom_map != NULL && addr <= 0x3ffffu) return core->rom_map[addr];
         if (addr >= RTYPE_M72_WORK_RAM_BASE && addr < RTYPE_M72_WORK_RAM_BASE + RTYPE_M72_WORK_RAM_BYTES) return core->work_ram[addr - RTYPE_M72_WORK_RAM_BASE];
         if (addr >= RTYPE_M72_SPRITE_RAM_BASE && addr < RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES) return core->sprite_ram[addr - RTYPE_M72_SPRITE_RAM_BASE];
-        if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return core->palette0_ram[addr - RTYPE_M72_PALETTE0_BASE];
-        if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return core->palette1_ram[addr - RTYPE_M72_PALETTE1_BASE];
+        if (addr >= RTYPE_M72_PALETTE0_BASE && addr < RTYPE_M72_PALETTE0_BASE + 0x0c00u) return palette_read_byte(core->palette0_ram, addr - RTYPE_M72_PALETTE0_BASE);
+        if (addr >= RTYPE_M72_PALETTE1_BASE && addr < RTYPE_M72_PALETTE1_BASE + 0x0c00u) return palette_read_byte(core->palette1_ram, addr - RTYPE_M72_PALETTE1_BASE);
         if (addr >= RTYPE_M72_VRAM0_BASE && addr < RTYPE_M72_VRAM0_BASE + RTYPE_M72_VRAM_BYTES) return core->vram0[addr - RTYPE_M72_VRAM0_BASE];
         if (addr >= RTYPE_M72_VRAM1_BASE && addr < RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES) return core->vram1[addr - RTYPE_M72_VRAM1_BASE];
         if (addr >= RTYPE_M72_SOUND_RAM_BASE && addr < RTYPE_M72_SOUND_RAM_BASE + 0x10000u) return core->sound_ram ? core->sound_ram[addr - RTYPE_M72_SOUND_RAM_BASE] : 0xff;
