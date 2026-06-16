@@ -1,6 +1,7 @@
 #include "rtype_m72_video.h"
 #include "rtype_blit.h"
 
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
@@ -71,7 +72,7 @@ static uint8_t fallback_tile_pixel(unsigned code, unsigned x, unsigned y) {
     return (uint8_t)((v >> 3) & 0x0fu);
 }
 
-static uint8_t decode_tile_pixel(const uint8_t *region, size_t size, unsigned code, unsigned x, unsigned y) {
+IRAM_ATTR static uint8_t decode_tile_pixel(const uint8_t *region, size_t size, unsigned code, unsigned x, unsigned y) {
     if (region == NULL || size < 4u || code * 8u >= size / 4u) return fallback_tile_pixel(code, x, y);
     const unsigned quarter = (unsigned)(size / 4u);
     const unsigned plane_offsets[4] = {quarter * 3u, quarter * 2u, quarter, 0u};
@@ -90,7 +91,7 @@ static uint8_t fallback_sprite_pixel(unsigned code, unsigned x, unsigned y) {
     return (uint8_t)((v >> 2) & 0x0fu);
 }
 
-static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, unsigned code, unsigned x, unsigned y) {
+IRAM_ATTR static uint8_t decode_sprite_pixel(const rtype_m72_video_t *video, unsigned code, unsigned x, unsigned y) {
     if (video->sprites == NULL || video->sprites_size < 4u || code * 32u >= video->sprites_size / 4u) {
         return fallback_sprite_pixel(code, x, y);
     }
@@ -189,7 +190,7 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     }
 }
 
-static uint16_t sample_tile_layer_pixel(const rtype_m72_video_t *video, const uint8_t *region,
+IRAM_ATTR static uint16_t sample_tile_layer_pixel(const rtype_m72_video_t *video, const uint8_t *region,
                                         size_t region_size, const uint8_t *vram,
                                         unsigned palette_base, uint16_t sx_scroll,
                                         uint16_t sy_scroll, unsigned raw_x, unsigned raw_y,
@@ -310,7 +311,7 @@ static unsigned collect_visible_sprite_entries(const rtype_m72_video_t *video, s
     return count;
 }
 
-static uint16_t sample_sprite_entries(const rtype_m72_video_t *video, const sprite_entry_t *entries,
+IRAM_ATTR static uint16_t sample_sprite_entries(const rtype_m72_video_t *video, const sprite_entry_t *entries,
                                       unsigned count, unsigned raw_x, unsigned raw_y, bool *hit) {
     if (hit) *hit = false;
     uint16_t out = 0;
@@ -426,7 +427,7 @@ static inline uint16_t cyd_wire_rgb565(uint16_t rgb565) {
 #endif
 }
 
-static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *dst,
+IRAM_ATTR static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *dst,
                                     unsigned phys_x, unsigned cols, bool include_sprites) {
     if (video == NULL || dst == NULL || cols == 0 || phys_x >= RTYPE_BLIT_CYD_PHYS_W) return;
     if (phys_x + cols > RTYPE_BLIT_CYD_PHYS_W) cols = RTYPE_BLIT_CYD_PHYS_W - phys_x;
