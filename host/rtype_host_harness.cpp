@@ -824,7 +824,7 @@ struct Cpu8086 {
 };
 
 void usage(const char *argv0) {
-    std::fprintf(stderr, "Usage: %s [--packed DIR] [--rom-dir DIR] [--instructions N] [--out PPM] [--no-seed] [--stop-after-first-irq-loop]\n", argv0);
+    std::fprintf(stderr, "Usage: %s [--packed DIR] [--rom-dir DIR] [--instructions N] [--out PPM] [--no-seed] [--stop-after-first-irq-loop] [--target-frame N] [--target-root N]\n", argv0);
 }
 
 } // namespace
@@ -836,6 +836,10 @@ int main(int argc, char **argv) {
     uint64_t instruction_limit = 2000000;
     bool seed = true;
     bool stop_after_first_irq_loop = false;
+    uint16_t target_frame = 0;
+    uint16_t target_root = 0;
+    bool use_target_frame = false;
+    bool use_target_root = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--packed" && i + 1 < argc) packed = argv[++i];
@@ -844,6 +848,8 @@ int main(int argc, char **argv) {
         else if (a == "--out" && i + 1 < argc) out = argv[++i];
         else if (a == "--no-seed") seed = false;
         else if (a == "--stop-after-first-irq-loop") stop_after_first_irq_loop = true;
+        else if (a == "--target-frame" && i + 1 < argc) { target_frame = (uint16_t)std::strtoul(argv[++i], nullptr, 0); use_target_frame = true; }
+        else if (a == "--target-root" && i + 1 < argc) { target_root = (uint16_t)std::strtoul(argv[++i], nullptr, 0); use_target_root = true; }
         else { usage(argv[0]); return 2; }
     }
 
@@ -866,6 +872,13 @@ int main(int argc, char **argv) {
                 cpu.pending_frame_sp_valid = false;
             }
             if (stop_after_first_irq_loop && cpu.interrupt_count > 0) break;
+            if (use_target_frame || use_target_root) {
+                uint16_t cur_frame = m.read16(0x40000u + 0x2eb4u);
+                uint16_t cur_root = m.read16(0x40000u + 0x0000u);
+                bool frame_ok = !use_target_frame || cur_frame >= target_frame;
+                bool root_ok = !use_target_root || cur_root == target_root;
+                if (cpu.interrupt_count > 0 && frame_ok && root_ok) break;
+            }
         }
         const bool vector_ready = (m.read16(0x20u * 4u) == 0x00fe && m.read16(0x20u * 4u + 2u) == 0x0040);
         const bool in_main_loop = (cpu.s[CS] == 0x0040 && cpu.ip >= 0x00d0 && cpu.ip <= 0x00f8);
