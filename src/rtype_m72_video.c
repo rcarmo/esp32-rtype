@@ -210,7 +210,11 @@ static uint16_t sample_tile_layer_pixel(const rtype_m72_video_t *video, const ui
     unsigned rx = flipx ? (7u - px) : px;
     unsigned ry = flipy ? (7u - py) : py;
     uint8_t pen = decode_tile_pixel(region, region_size, raw_code & 0x3fffu, rx, ry);
-    if (transparent && pen == 0) return 0;
+    if (pen == 0) {
+        if (transparent) return 0;
+        if (hit) *hit = true;
+        return 0;
+    }
     if (hit) *hit = true;
     unsigned color = attr & 0x0fu;
     unsigned pi = palette_base + color * 16u + pen;
@@ -368,8 +372,10 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
                 bool hit = false;
                 uint16_t px = 0;
                 if (use_layer0_as_bg) {
-                    px = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
-                                                 256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, false, &hit);
+                    bool fg_hit = false;
+                    uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                          256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                    px = fg_hit ? fg : 0;
                 } else {
                     px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
                                                  256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
@@ -394,8 +400,10 @@ static void render_cyd_columns_impl(const rtype_m72_video_t *video, uint16_t *ds
             bool hit = false;
             uint16_t px = 0;
             if (use_layer0_as_bg) {
-                px = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
-                                             256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, false, &hit);
+                bool fg_hit = false;
+                uint16_t fg = sample_tile_layer_pixel(video, video->tiles0, video->tiles0_size, video->vram0,
+                                                      256u, video->scrollx[0], video->scrolly[0], raw_x, raw_y, true, &fg_hit);
+                px = fg_hit ? fg : 0;
             } else {
                 px = sample_tile_layer_pixel(video, video->tiles1, video->tiles1_size, video->vram1,
                                              256u, video->scrollx[1], video->scrolly[1], raw_x, raw_y, false, &hit);
