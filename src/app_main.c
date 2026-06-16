@@ -88,7 +88,7 @@ void app_main(void) {
             ESP_LOGI(TAG, "CYD CPU backend starting without full framebuffer");
         }
         uint64_t next_vblank = 120000;
-        const uint64_t wait_skip_window = 110000; // run dispatcher, then skip only the queue-empty wait tail
+        const uint64_t wait_skip_window = 115000; // run dispatcher, then skip only the queue-empty wait tail
         int64_t next_vblank_us = esp_timer_get_time();
         const int64_t frame_period_us = 16667; // pace vblank to real time; skip idle instructions, not game time
         bool main_loop_seen = false;
