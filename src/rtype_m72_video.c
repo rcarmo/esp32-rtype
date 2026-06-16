@@ -219,11 +219,7 @@ IRAM_ATTR static uint16_t sample_tile_layer_pixel(const rtype_m72_video_t *video
     if (hit) *hit = true;
     unsigned color = attr & 0x0fu;
     unsigned pi = palette_base + color * 16u + pen;
-    uint16_t c = video->palette[pi & 0x1ffu];
-    if (c == 0 && pen != 0 && palette_base >= 256u) {
-        c = video->palette[(color * 16u + pen) & 0x1ffu];
-    }
-    return visible_color(c, pi, pen);
+    return visible_color(video->palette[pi & 0x1ffu], pi, pen);
 }
 
 static inline uint16_t cyd_wire_rgb565(uint16_t rgb565);
