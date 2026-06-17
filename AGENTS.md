@@ -86,8 +86,7 @@ The camera capture tools auto-probe `/dev/video*`. If auto-detection fails, pass
 At minimum:
 
 ```bash
-make build-s3
-make build-cyd
+make ci
 make smoke-s3 SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
 ```
 

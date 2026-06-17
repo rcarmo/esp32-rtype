@@ -4,11 +4,18 @@ This repository is a display-first ESP32 port of Irem R-Type / M72. The primary 
 
 ## Required local checks
 
-Before opening or pushing changes that affect source, build metadata, or renderer behavior, run at least:
+Before opening or pushing changes that affect source, build metadata, or renderer behavior, run the supported local CI target:
+
+```bash
+make ci
+```
+
+Equivalent core checks are:
 
 ```bash
 make bootstrap
 make guard-roms
+make py-check
 make build-s3
 make build-cyd
 ```

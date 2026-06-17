@@ -22,7 +22,7 @@ S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
 ESPTOOL ?= $(PYTHON) -m esptool
 
-.PHONY: help bootstrap check-tool guard-roms format-check inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean distclean
+.PHONY: help bootstrap check-tool guard-roms format-check py-check ci inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean distclean
 
 help:
 	@echo "R-Type display-first targets"
@@ -35,7 +35,9 @@ help:
 	@echo "  make host-run                 - run native harness and render a PPM/PNG frame"
 	@echo "  make check                    - run host-side ROM/packer/gfx checks"
 	@echo "  make guard-roms               - fail if ROM/generated files are tracked"
+	@echo "  make py-check                 - byte-compile Python helper scripts"
 	@echo "  make format-check             - check C/C++ formatting when clang-format is installed"
+	@echo "  make ci                       - run source-tree guards plus supported builds"
 	@echo "  make build / build-s3         - build ESP32-S3 480x800 firmware (primary target)"
 	@echo "  make build-cyd                - build ESP32 CYD 240x320 SPI firmware (small target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target; currently BSP-integration limited)"
@@ -93,6 +95,11 @@ format-check:
 			clang-format --dry-run --Werror $$files; \
 		fi; \
 	fi
+
+py-check:
+	$(PYTHON) -m py_compile tools/*.py
+
+ci: bootstrap guard-roms py-check format-check host-harness build-all
 
 inspect-rom:
 	bun tools/inspect_rtype.ts $(ROM_ZIP) $(ROM_EXTRACTED)
