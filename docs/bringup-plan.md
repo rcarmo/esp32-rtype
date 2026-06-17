@@ -44,14 +44,15 @@ Explicitly deferred:
 ## ESP32-S3 graphics renderer status
 
 - Firmware now includes `src/rtype_m72_video.c`, a graphics-only M72 tile/sprite renderer with the same region concepts as the host harness: `sprites`, `tiles0`, `tiles1`, `vram0`, `vram1`, sprite RAM, scroll registers, and 512-entry RGB565 palette.
-- The S3 app allocates M72 VRAM/sprite RAM in PSRAM-capable memory and renders through this engine every frame. Until external ROM regions are deployed, deterministic fallback tile/sprite pixels keep the display path active without committing ROM data.
-- Current S3 build remains green for `esp32-s3-8048s043c-rtype`; flash usage is about 225 KB.
+- The S3 app allocates M72 VRAM/sprite RAM in PSRAM-capable memory and renders live M72 state through this engine.
+- Procedural boot/fallback pixels are only for no-ROM/no-core diagnostics; they are not the accepted gameplay renderer.
+- Current S3 build remains green for `esp32-s3-8048s043c-rtype`.
 
 ## External ROM graphics loader
 
 - Firmware exposes `rtype_rom_load_m72_graphics("/spiflash/rtype", &m72)` to load unpacked user-supplied ROM files into PSRAM-backed M72 `sprites`, `tiles0`, and `tiles1` regions.
 - The loader mirrors the MAME R-Type sprite-region layout, including first-32KB copies from the 64KB `cpu-01/11/21/31` files.
-- ROM files remain external and ignored; if the path is unavailable the S3 renderer continues with deterministic fallback pixels.
+- ROM files remain external and ignored; if the path is unavailable the firmware may show only diagnostic fallback output and must not be treated as a valid gameplay/fidelity run.
 
 ## Shared M72 core state
 
@@ -67,7 +68,7 @@ Explicitly deferred:
 ## Palette/visible-frame audit
 
 - Palette RAM is populated in host runs (`palram0_nz≈1517`, `palram1_nz≈1432`; palette entries nonzero in both banks).
-- The renderer mostly resolves nonzero pens through real palette entries (`render_palette_px≈35938`) with a smaller fallback contribution (`render_fallback_px≈3606`).
+- The live renderer resolves pens through emulated palette entries; synthetic palette fallbacks were removed from the gameplay path.
 - M72 visible X is `64..447` on a 512-wide raw screen; host and firmware renderers now subtract the visible-area X offset when writing the 384-wide framebuffer.
 - Current frame is still not done-condition quality: only about 640 nonblack visible pixels in a small `48x24` bbox, and 20M/100M/300M host frames are identical. Remaining gap is sparse/stuck live video state, not absent palette RAM.
 
