@@ -9,18 +9,10 @@
 #endif
 
 uint16_t rtype_blit_rgb565_identity(uint16_t rgb565) {
-#if defined(RTYPE_BOARD_ESP32_2432S028)
-    // CYD ILI9341 SPI path: the panel/MADCTL wiring presents red and blue
-    // swapped relative to logical RGB565, and SPI transmits pixel bytes
-    // MSB-first. Swap R/B in the 565 word, then byte-swap for the little-
-    // endian DMA buffer handed to esp_lcd_panel_draw_bitmap().
-    uint16_t bgr565 = (uint16_t)((rgb565 & 0x07e0u) |
-                                 ((rgb565 & 0xf800u) >> 11) |
-                                 ((rgb565 & 0x001fu) << 11));
-    return (uint16_t)((bgr565 << 8) | (bgr565 >> 8));
-#else
+    // esp_lcd draw_bitmap consumes RGB565 pixels in native uint16_t memory order.
+    // Board color order is configured in the panel driver/init sequence; do not
+    // apply board-specific software color or byte swaps here.
     return rgb565;
-#endif
 }
 
 static inline uint32_t pack2_rgb565(uint16_t a, uint16_t b) {
