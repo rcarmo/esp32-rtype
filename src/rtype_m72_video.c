@@ -439,9 +439,17 @@ static void draw_m72_mame_tile_layers(const rtype_m72_video_t *video, uint16_t *
     // MAME m72_v.cpp VIDEO_START(m72) transmask setup and screen_update draw order.
     static const uint16_t fg_layer1_low[4]  = {0x0001u, 0xff01u, 0xffffu, 0xffffu};
     static const uint16_t fg_layer0_high[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
+    static const uint16_t bg_layer0_prio[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
     // screen_update temporarily changes BG group 2 to set_transmask(2, 0xffff, 0x0000).
     static const uint16_t bg_layer1_low[4]  = {0x0000u, 0xff00u, 0x0000u, 0xfffeu};
     static const uint16_t bg_layer0_high[4] = {0xffffu, 0x00ffu, 0xffffu, 0x0001u};
+
+    // MAME's initial priority-buffer preparation draws also write to the bitmap.
+    // Keep those layer0 passes; omitting them drops visible layer0 artwork.
+    draw_tile_layer_masked(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
+                           video->scrollx[1], video->scrolly[1], bg_layer0_prio);
+    draw_tile_layer_masked(video, fb, video->tiles0, video->tiles0_size, video->vram0, 256u,
+                           video->scrollx[0], video->scrolly[0], fg_layer0_high);
 
     draw_tile_layer_masked(video, fb, video->tiles1, video->tiles1_size, video->vram1, 256u,
                            video->scrollx[1], video->scrolly[1], bg_layer1_low);

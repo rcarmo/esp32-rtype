@@ -47,6 +47,16 @@ static esp_err_t mount_spiflash_storage(void) {
 }
 #endif
 
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+static uint32_t count_palette_nonzero(const rtype_m72_video_t *video, unsigned begin, unsigned end) {
+    if (video == NULL) return 0;
+    if (end > RTYPE_M72_PALETTE_COLORS) end = RTYPE_M72_PALETTE_COLORS;
+    uint32_t n = 0;
+    for (unsigned i = begin; i < end; i++) if (video->palette[i] != 0) n++;
+    return n;
+}
+#endif
+
 #if defined(RTYPE_BOARD_ESP32_8048S043C) && RTYPE_S3_RENDER_AUDIT
 typedef struct {
     uint32_t nonzero;
@@ -76,13 +86,6 @@ static fb_audit_t audit_framebuffer(const uint16_t *fb) {
     return a;
 }
 
-static uint32_t count_palette_nonzero(const rtype_m72_video_t *video, unsigned begin, unsigned end) {
-    if (video == NULL) return 0;
-    if (end > RTYPE_M72_PALETTE_COLORS) end = RTYPE_M72_PALETTE_COLORS;
-    uint32_t n = 0;
-    for (unsigned i = begin; i < end; i++) if (video->palette[i] != 0) n++;
-    return n;
-}
 #endif
 
 static void log_system_info(void) {
@@ -303,6 +306,8 @@ void app_main(void) {
     bool full_frame_vector_ready = false;
     const uint64_t full_render_irq_interval = 5u;
     uint64_t full_last_presented_irq = 0;
+    uint64_t full_render_due_irq = 0;
+    bool full_render_due = false;
     uint64_t full_last_perf_irq = 0;
     uint64_t full_last_perf_insn = 0;
     uint64_t full_prof_cpu_us = 0;
@@ -333,15 +338,17 @@ void app_main(void) {
                 if (in_main_loop) {
                     full_main_loop_seen = true;
                     rtype_i86_complete_frame_if_idle(&full_cpu);
-                    if (full_cpu.interrupt_count > 0 &&
-                        full_cpu.interrupt_count >= full_last_presented_irq + (full_render_irq_interval * 4u)) {
+                    uint16_t cur_root = rtype_m72_core_read16(&core, 0x40000u);
+                    if (full_cpu.interrupt_count > 0 && cur_root == 0x0aa6u &&
+                        full_cpu.interrupt_count >= full_last_presented_irq + full_render_irq_interval) {
+                        full_render_due = true;
+                        full_render_due_irq = full_cpu.interrupt_count;
                         break;
                     }
                 }
                 bool idle_queue_empty_tail = (full_cpu.s[RTYPE_I86_CS] == 0x0040 && full_cpu.ip == 0x00ddu && full_cpu.zf);
                 bool late_wait_tail = idle_queue_empty_tail && full_cpu.insn + full_wait_skip_window >= full_next_vblank;
-                if (full_main_loop_seen && full_frame_vector_ready && full_cpu.iff && full_cpu.interrupt_depth == 0 &&
-                    (late_wait_tail || (in_main_loop && full_cpu.insn >= full_next_vblank))) {
+                if (full_main_loop_seen && full_frame_vector_ready && full_cpu.iff && full_cpu.interrupt_depth == 0 && late_wait_tail) {
                     if (late_wait_tail && full_cpu.insn < full_next_vblank) full_cpu.insn = full_next_vblank;
                     int64_t now_us = esp_timer_get_time();
                     if (now_us >= full_next_vblank_us) {
@@ -414,12 +421,30 @@ void app_main(void) {
         if (core_err == ESP_OK) {
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
             if (full_cpu_running) {
-                uint64_t pending_irqs = full_cpu.interrupt_count - full_last_presented_irq;
-                if (pending_irqs < full_render_irq_interval) {
-                    vTaskDelay(pdMS_TO_TICKS(1));
-                    continue;
+                if (!full_render_due) {
+                    uint64_t pending_irqs = full_cpu.interrupt_count - full_last_presented_irq;
+                    uint16_t cur_root = rtype_m72_core_read16(&core, 0x40000u);
+                    uint16_t q_head_now = rtype_m72_core_read16(&core, 0x42ed8u);
+                    uint16_t q_tail_now = rtype_m72_core_read16(&core, 0x42edau);
+                    if (pending_irqs < full_render_irq_interval || cur_root != 0x0aa6u) {
+                        vTaskDelay(pdMS_TO_TICKS(1));
+                        continue;
+                    }
+                    if (q_head_now != q_tail_now && pending_irqs < full_render_irq_interval * 4u) {
+                        vTaskDelay(pdMS_TO_TICKS(1));
+                        continue;
+                    }
+                    full_render_due_irq = full_cpu.interrupt_count;
                 }
-                full_last_presented_irq = full_cpu.interrupt_count;
+                full_render_due = false;
+                full_last_presented_irq = full_render_due_irq;
+                uint32_t drain_budget = 600000u;
+                while (drain_budget-- && !full_cpu.halted) {
+                    uint16_t q_head_now = rtype_m72_core_read16(&core, 0x42ed8u);
+                    uint16_t q_tail_now = rtype_m72_core_read16(&core, 0x42edau);
+                    if (q_head_now == q_tail_now) break;
+                    rtype_i86_step(&full_cpu);
+                }
                 int64_t full_render_begin_us = esp_timer_get_time();
                 rtype_m72_core_render_frame(&core, fb);
 #if RTYPE_S3_RENDER_AUDIT

@@ -47,7 +47,9 @@ static esp_err_t alloc_sparse_region(uint8_t **ptr, size_t bytes, const char *na
     if (*ptr == NULL) *ptr = rtype_m72_alloc_region(bytes, name);
 #endif
     if (*ptr == NULL) return ESP_ERR_NO_MEM;
-    memset(*ptr, 0xff, bytes);
+    // RAM devices power up cleared in MAME/host harness assumptions. Keep
+    // unmapped reads at 0xff, but do not pre-fill allocated RAM with 0xff.
+    memset(*ptr, 0x00, bytes);
     return ESP_OK;
 }
 

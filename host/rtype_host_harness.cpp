@@ -116,6 +116,16 @@ struct M72 {
         mem.fill(0xff);
         auto main_map = read_file(packed_dir + "/maincpu-map.bin", MEM_SIZE);
         std::memcpy(mem.data(), main_map.data(), main_map.size());
+        // The packed map uses 0xff fill outside ROM. Clear RAM-mapped devices so
+        // the host reference matches MAME/S3 RAM semantics instead of rendering
+        // stale fill bytes as tile/sprite/palette state.
+        std::fill(mem.begin() + 0x40000u, mem.begin() + 0x44000u, 0x00); // work RAM
+        std::fill(mem.begin() + 0xc0000u, mem.begin() + 0xc0400u, 0x00); // sprite RAM
+        std::fill(mem.begin() + 0xc8000u, mem.begin() + 0xc8c00u, 0x00); // palette 0
+        std::fill(mem.begin() + 0xcc000u, mem.begin() + 0xccc00u, 0x00); // palette 1
+        std::fill(mem.begin() + 0xd0000u, mem.begin() + 0xd4000u, 0x00); // foreground VRAM
+        std::fill(mem.begin() + 0xd8000u, mem.begin() + 0xdc000u, 0x00); // background VRAM
+        std::fill(mem.begin() + 0xe0000u, mem.begin() + 0xf0000u, 0x00); // sound/shared RAM
 
         // MAME R-Type/Japan ROM region layout for the user-supplied names.
         copy_file(sprites, 0x00000, rom_dir + "/cpu-00.bin", 0x10000);
@@ -378,9 +388,12 @@ struct M72 {
     void draw_m72_mame_tile_layers() {
         static const uint16_t fg_layer1_low[4]  = {0x0001u, 0xff01u, 0xffffu, 0xffffu};
         static const uint16_t fg_layer0_high[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
+        static const uint16_t bg_layer0_prio[4] = {0xffffu, 0x00ffu, 0x0001u, 0x0001u};
         static const uint16_t bg_layer1_low[4]  = {0x0000u, 0xff00u, 0x0000u, 0xfffeu};
         static const uint16_t bg_layer0_high[4] = {0xffffu, 0x00ffu, 0xffffu, 0x0001u};
 
+        draw_tile_layer_masked(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], bg_layer0_prio);
+        draw_tile_layer_masked(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], fg_layer0_high);
         draw_tile_layer_masked(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], bg_layer1_low);
         draw_tile_layer_masked(tiles0, 0xd0000, 256, scrollx[0], scrolly[0], fg_layer1_low);
         draw_tile_layer_masked(tiles1, 0xd8000, 256, scrollx[1], scrolly[1], bg_layer0_high);

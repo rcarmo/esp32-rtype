@@ -317,11 +317,7 @@ void rtype_i86_complete_frame_if_idle(rtype_i86_cpu_t *cpu) {
     }
 }
 
-static void step_group_shift8(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, uint32_t before) {
-    unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7;
-    uint32_t a = 0;
-    uint8_t res = 0;
-    if (mod == 3) res = *reg8(cpu, rm); else { a = ea(cpu, mod, rm); res = rb(cpu, a); }
+static uint8_t apply_group_shift8(rtype_i86_cpu_t *cpu, uint8_t sub, uint8_t res, uint8_t count, uint32_t before) {
     while (count--) {
         if (sub == 0) { cpu->cf = (res & 0x80u) != 0; res = (uint8_t)((res << 1) | (res >> 7)); }
         else if (sub == 1) { cpu->cf = (res & 1u) != 0; res = (uint8_t)((res >> 1) | (res << 7)); }
@@ -330,17 +326,13 @@ static void step_group_shift8(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, u
         else if (sub == 4) { cpu->cf = (res & 0x80u) != 0; res = (uint8_t)(res << 1); }
         else if (sub == 5) { cpu->cf = (res & 1u) != 0; res = (uint8_t)(res >> 1); }
         else if (sub == 7) { cpu->cf = (res & 1u) != 0; res = (uint8_t)((int8_t)res >> 1); }
-        else { halt_reason(cpu, "unsupported shift8/%u at %05x", sub, before); return; }
+        else { halt_reason(cpu, "unsupported shift8/%u at %05x", sub, before); return res; }
     }
     if (sub >= 4) set_logic8(cpu, res);
-    if (mod == 3) *reg8(cpu, rm) = res; else wb(cpu, a, res);
+    return res;
 }
 
-static void step_group_shift16(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, uint32_t before) {
-    unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7;
-    uint32_t a = 0;
-    uint16_t res = 0;
-    if (mod == 3) res = cpu->r[rm]; else { a = ea(cpu, mod, rm); res = rw(cpu, a); }
+static uint16_t apply_group_shift16(rtype_i86_cpu_t *cpu, uint8_t sub, uint16_t res, uint8_t count, uint32_t before) {
     while (count--) {
         if (sub == 0) { cpu->cf = (res & 0x8000u) != 0; res = (uint16_t)((res << 1) | (res >> 15)); }
         else if (sub == 1) { cpu->cf = (res & 1u) != 0; res = (uint16_t)((res >> 1) | (res << 15)); }
@@ -349,9 +341,27 @@ static void step_group_shift16(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, 
         else if (sub == 4) { cpu->cf = (res & 0x8000u) != 0; res = (uint16_t)(res << 1); }
         else if (sub == 5) { cpu->cf = (res & 1u) != 0; res = (uint16_t)(res >> 1); }
         else if (sub == 7) { cpu->cf = (res & 1u) != 0; res = (uint16_t)((int16_t)res >> 1); }
-        else { halt_reason(cpu, "unsupported shift16/%u at %05x", sub, before); return; }
+        else { halt_reason(cpu, "unsupported shift16/%u at %05x", sub, before); return res; }
     }
     if (sub >= 4) set_logic16(cpu, res);
+    return res;
+}
+
+static void step_group_shift8(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, uint32_t before) {
+    unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7;
+    uint32_t a = 0;
+    uint8_t res = 0;
+    if (mod == 3) res = *reg8(cpu, rm); else { a = ea(cpu, mod, rm); res = rb(cpu, a); }
+    res = apply_group_shift8(cpu, (uint8_t)sub, res, count, before);
+    if (mod == 3) *reg8(cpu, rm) = res; else wb(cpu, a, res);
+}
+
+static void step_group_shift16(rtype_i86_cpu_t *cpu, uint8_t mr, uint8_t count, uint32_t before) {
+    unsigned mod = mr >> 6, sub = (mr >> 3) & 7, rm = mr & 7;
+    uint32_t a = 0;
+    uint16_t res = 0;
+    if (mod == 3) res = cpu->r[rm]; else { a = ea(cpu, mod, rm); res = rw(cpu, a); }
+    res = apply_group_shift16(cpu, (uint8_t)sub, res, count, before);
     if (mod == 3) cpu->r[rm] = res; else ww(cpu, a, res);
 }
 
@@ -455,8 +465,8 @@ IRAM_ATTR bool rtype_i86_step(rtype_i86_cpu_t *cpu) {
     case 0xad: { uint16_t seg=cpu->seg_override_active?cpu->seg_override_value:cpu->s[RTYPE_I86_DS]; cpu->r[RTYPE_I86_AX]=rw(cpu,lin(cpu,seg,cpu->r[RTYPE_I86_SI])); cpu->r[RTYPE_I86_SI]+=(cpu->df?-2:2); return true; }
     case 0xae: { uint8_t v=rb(cpu,lin(cpu,cpu->s[RTYPE_I86_ES],cpu->r[RTYPE_I86_DI])); set_sub8(cpu,*reg8(cpu,0),v,(uint8_t)(*reg8(cpu,0)-v)); cpu->r[RTYPE_I86_DI]+=(cpu->df?-1:1); return true; }
     case 0xaf: { uint16_t v=rw(cpu,lin(cpu,cpu->s[RTYPE_I86_ES],cpu->r[RTYPE_I86_DI])); set_sub16(cpu,cpu->r[RTYPE_I86_AX],v,(uint16_t)(cpu->r[RTYPE_I86_AX]-v)); cpu->r[RTYPE_I86_DI]+=(cpu->df?-2:2); return true; }
-    case 0xc0: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,rm=mr&7; if(mod!=3){uint32_t save_pc=rtype_i86_pc(cpu); (void)ea(cpu,mod,rm); cpu->ip=(uint16_t)(save_pc - ((uint32_t)cpu->s[RTYPE_I86_CS] << 4));} uint8_t cnt; if(mod==3){cnt=fetch8(cpu)&0x1fu;} else { uint32_t a=ea(cpu,mod,rm); (void)a; cnt=fetch8(cpu)&0x1fu; } step_group_shift8(cpu,mr,cnt,before); return !cpu->halted; }
-    case 0xc1: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,rm=mr&7; if(mod==3){uint8_t cnt=fetch8(cpu)&0x1fu; step_group_shift16(cpu,mr,cnt,before);} else { uint8_t cnt; uint32_t saved_ip=cpu->ip; (void)ea(cpu,mod,rm); cnt=fetch8(cpu)&0x1fu; cpu->ip=(uint16_t)saved_ip; step_group_shift16(cpu,mr,cnt,before); } return !cpu->halted; }
+    case 0xc0: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,sub=(mr>>3)&7,rm=mr&7; uint32_t a=0; uint8_t v=0; if(mod==3)v=*reg8(cpu,rm); else { a=ea(cpu,mod,rm); v=rb(cpu,a); } uint8_t cnt=fetch8(cpu)&0x1fu; v=apply_group_shift8(cpu,(uint8_t)sub,v,cnt,before); if(mod==3)*reg8(cpu,rm)=v; else wb(cpu,a,v); return !cpu->halted; }
+    case 0xc1: { uint8_t mr=fetch8(cpu); unsigned mod=mr>>6,sub=(mr>>3)&7,rm=mr&7; uint32_t a=0; uint16_t v=0; if(mod==3)v=cpu->r[rm]; else { a=ea(cpu,mod,rm); v=rw(cpu,a); } uint8_t cnt=fetch8(cpu)&0x1fu; v=apply_group_shift16(cpu,(uint8_t)sub,v,cnt,before); if(mod==3)cpu->r[rm]=v; else ww(cpu,a,v); return !cpu->halted; }
     case 0xc2: { uint16_t adj=fetch16(cpu); cpu->ip=pop(cpu); cpu->r[RTYPE_I86_SP]=(uint16_t)(cpu->r[RTYPE_I86_SP]+adj); return true; }
     case 0xc3: cpu->ip=pop(cpu); return true;
     case 0xca: { uint16_t adj=fetch16(cpu); cpu->ip=pop(cpu); cpu->s[RTYPE_I86_CS]=pop(cpu); cpu->r[RTYPE_I86_SP]=(uint16_t)(cpu->r[RTYPE_I86_SP]+adj); return true; }
