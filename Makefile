@@ -73,13 +73,13 @@ check-tool:
 	fi
 
 guard-roms:
-	@tracked="$$(git ls-files 'roms/*' 'artifacts/*' 2>/dev/null | grep -Ev '^(roms/\.gitkeep|roms/README\.md)$$' || true)"; \
+	@tracked="$$(git ls-files 'roms/*' 'artifacts/*' 'sdkconfig.*-rtype' 'dependencies.lock' 2>/dev/null | grep -Ev '^(roms/\.gitkeep|roms/README\.md)$$' || true)"; \
 	if [ -n "$$tracked" ]; then \
-		echo "Refusing to proceed: generated/ROM files are tracked:" >&2; \
+		echo "Refusing to proceed: generated/ROM/build files are tracked:" >&2; \
 		echo "$$tracked" >&2; \
 		exit 1; \
 	fi
-	@echo "ROM/artifact tracking guard passed."
+	@echo "Generated/ROM tracking guard passed."
 
 format-check:
 	@if ! command -v clang-format >/dev/null 2>&1; then \
