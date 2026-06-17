@@ -35,7 +35,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", default=".", help="project directory")
     ap.add_argument("--port", default="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0")
-    ap.add_argument("--camera", default="/dev/video3")
+    ap.add_argument("--camera", default="auto")
     ap.add_argument("--root", type=parse_int, default=0x0AA6)
     ap.add_argument("--min-frame", type=parse_int, default=0x0700)
     ap.add_argument("--seconds", type=float, default=120.0)

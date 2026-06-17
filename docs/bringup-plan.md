@@ -159,6 +159,12 @@ Use the reproducible comparison target instead of arbitrary camera photos:
 make compare-s3-host
 ```
 
+The capture tool probes `/dev/video*` by default. If the capture device is not auto-detected, pass it explicitly, for example:
+
+```bash
+/workspace/.venvs/pio/bin/python tools/compare_s3_host.py --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 --camera /dev/videoN
+```
+
 This runs `tools/compare_s3_host.py`, which:
 
 1. runs `tools/capture_s3_playfield.py`,
@@ -184,6 +190,12 @@ For just device-side captures at active playfield states:
 
 ```bash
 make capture-s3-playfield
+```
+
+or, with an explicit camera:
+
+```bash
+/workspace/.venvs/pio/bin/python tools/capture_s3_playfield.py --camera /dev/videoN
 ```
 
 The capture script writes images like:
