@@ -14,4 +14,4 @@ else()
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(rtype_tab5)
+project(esp32_rtype)

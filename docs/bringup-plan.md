@@ -1,4 +1,4 @@
-# R-Type Tab5 display-first bring-up plan
+# esp32-rtype display-first bring-up plan
 
 ## Scope
 
