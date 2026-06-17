@@ -1,4 +1,4 @@
-# rtype-tab5 Agent Guide
+# esp32-rtype Agent Guide
 
 Project goal: live, display-first Irem R-Type / M72 bring-up on ESP32-class boards, with the ESP32-S3 8048S043C replacement board as the primary target.
 

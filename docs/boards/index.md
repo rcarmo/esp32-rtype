@@ -10,10 +10,23 @@ This project keeps multiple ESP32-class board profiles in one tree. The primary 
 
 ## Common validation
 
+Current green build set:
+
 ```bash
 make bootstrap
+make build-all
+```
+
+Equivalent explicit target builds:
+
+```bash
 make build-s3
 make build-cyd
+```
+
+Tab5 is retained as a secondary profile with local BSP integration caveats. Build it explicitly only when working on that board:
+
+```bash
 make build-tab5
 ```
 
