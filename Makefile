@@ -21,7 +21,7 @@ S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
 ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
 
-.PHONY: help bootstrap check-tool inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
+.PHONY: help bootstrap check-tool guard-roms format-check inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
 
 help:
 	@echo "R-Type display-first targets"
@@ -33,6 +33,8 @@ help:
 	@echo "  make host-harness             - build native host R-Type harness"
 	@echo "  make host-run                 - run native harness and render a PPM/PNG frame"
 	@echo "  make check                    - run host-side ROM/packer/gfx checks"
+	@echo "  make guard-roms               - fail if ROM/generated files are tracked"
+	@echo "  make format-check             - check C/C++ formatting when clang-format is installed"
 	@echo "  make build / build-s3         - build ESP32-S3 480x800 firmware (primary target)"
 	@echo "  make build-cyd                - build ESP32 CYD 240x320 SPI firmware (small target)"
 	@echo "  make build-tab5               - build ESP32-P4 Tab5 firmware (secondary target; currently BSP-integration limited)"
@@ -70,6 +72,25 @@ check-tool:
 		echo "found $(TOOL): $$(command -v $(TOOL))"; \
 	fi
 
+guard-roms:
+	@tracked="$$(git ls-files 'roms/*' 'artifacts/*' 2>/dev/null | grep -Ev '^(roms/\.gitkeep|roms/README\.md)$$' || true)"; \
+	if [ -n "$$tracked" ]; then \
+		echo "Refusing to proceed: generated/ROM files are tracked:" >&2; \
+		echo "$$tracked" >&2; \
+		exit 1; \
+	fi
+	@echo "ROM/artifact tracking guard passed."
+
+format-check:
+	@if ! command -v clang-format >/dev/null 2>&1; then \
+		echo "clang-format not installed; skipping format-check"; \
+	else \
+		files="$$(git ls-files '*.c' '*.h' '*.cpp' '*.hpp')"; \
+		if [ -n "$$files" ]; then \
+			clang-format --dry-run --Werror $$files; \
+		fi; \
+	fi
+
 inspect-rom:
 	bun tools/inspect_rtype.ts $(ROM_ZIP) $(ROM_EXTRACTED)
 
@@ -92,7 +113,7 @@ host-run: pack-rom host-harness
 	$(HOST_RTYPE_HARNESS) --packed artifacts/packed-rtype --rom-dir $(ROM_EXTRACTED) --out $(HOST_RTYPE_PPM) --instructions $(HOST_RTYPE_INSTRUCTIONS)
 	convert $(HOST_RTYPE_PPM) $(HOST_RTYPE_PNG)
 
-check: inspect-rom pack-rom gfx-atlas host-harness
+check: guard-roms inspect-rom pack-rom gfx-atlas host-harness
 
 build build-s3:
 	$(PIO) run -e $(S3_ENV)
