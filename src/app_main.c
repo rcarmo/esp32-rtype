@@ -325,6 +325,8 @@ void app_main(void) {
     uint64_t full_prof_render_us = 0;
     uint64_t full_prof_present_us = 0;
     uint32_t full_prof_renders = 0;
+    uint32_t full_prof_qdrain_ok = 0;
+    uint32_t full_prof_qdrain_miss = 0;
 #if RTYPE_S3_RENDER_AUDIT
     fb_audit_t full_last_fb_audit = {0};
 #endif
@@ -391,13 +393,14 @@ void app_main(void) {
                 uint32_t audit_vram1 = rtype_m72_core_count_nonzero(&core, RTYPE_M72_VRAM1_BASE, RTYPE_M72_VRAM1_BASE + RTYPE_M72_VRAM_BYTES);
                 uint32_t audit_spr = rtype_m72_core_count_nonzero(&core, RTYPE_M72_SPRITE_RAM_BASE, RTYPE_M72_SPRITE_RAM_BASE + RTYPE_M72_SPRITERAM_BYTES);
                 uint32_t audit_pal = count_palette_nonzero(&core.video, 0, RTYPE_M72_PALETTE_COLORS);
-                ESP_LOGI(TAG, "S3 PERF irq_s=%llu ips=%llu render_irq=%u cpu_us=%llu render_us=%llu/%u present_us=%llu/%u frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u) vram=%u/%u spr=%u pal=%u fb_nz=%u fb_box=%u,%u-%u,%u",
+                ESP_LOGI(TAG, "S3 PERF irq_s=%llu ips=%llu render_irq=%u cpu_us=%llu render_us=%llu/%u present_us=%llu/%u qdrain=%u/%u frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u) vram=%u/%u spr=%u pal=%u fb_nz=%u fb_box=%u,%u-%u,%u",
                          (unsigned long long)((dirq * 1000000ull) / dt_us),
                          (unsigned long long)((dinsn * 1000000ull) / dt_us),
                          (unsigned)full_render_irq_interval,
                          (unsigned long long)full_prof_cpu_us,
                          (unsigned long long)avg_render_us, (unsigned)full_prof_renders,
                          (unsigned long long)avg_present_us, (unsigned)full_prof_renders,
+                         (unsigned)full_prof_qdrain_ok, (unsigned)full_prof_qdrain_miss,
                          (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
                          (unsigned)rtype_m72_core_read16(&core, 0x40000u),
                          (unsigned)core.video.scrollx[0], (unsigned)core.video.scrolly[0],
@@ -407,13 +410,14 @@ void app_main(void) {
                          (unsigned)full_last_fb_audit.min_x, (unsigned)full_last_fb_audit.min_y,
                          (unsigned)full_last_fb_audit.max_x, (unsigned)full_last_fb_audit.max_y);
 #else
-                ESP_LOGI(TAG, "S3 PERF irq_s=%llu ips=%llu render_irq=%u cpu_us=%llu render_us=%llu/%u present_us=%llu/%u frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u)",
+                ESP_LOGI(TAG, "S3 PERF irq_s=%llu ips=%llu render_irq=%u cpu_us=%llu render_us=%llu/%u present_us=%llu/%u qdrain=%u/%u frame=0x%04x root=0x%04x scroll=(%u,%u)/(%u,%u)",
                          (unsigned long long)((dirq * 1000000ull) / dt_us),
                          (unsigned long long)((dinsn * 1000000ull) / dt_us),
                          (unsigned)full_render_irq_interval,
                          (unsigned long long)full_prof_cpu_us,
                          (unsigned long long)avg_render_us, (unsigned)full_prof_renders,
                          (unsigned long long)avg_present_us, (unsigned)full_prof_renders,
+                         (unsigned)full_prof_qdrain_ok, (unsigned)full_prof_qdrain_miss,
                          (unsigned)rtype_m72_core_read16(&core, 0x42eb4u),
                          (unsigned)rtype_m72_core_read16(&core, 0x40000u),
                          (unsigned)core.video.scrollx[0], (unsigned)core.video.scrolly[0],
@@ -423,6 +427,8 @@ void app_main(void) {
                 full_prof_render_us = 0;
                 full_prof_present_us = 0;
                 full_prof_renders = 0;
+                full_prof_qdrain_ok = 0;
+                full_prof_qdrain_miss = 0;
                 full_last_perf_insn = full_cpu.insn;
                 full_last_perf_irq = full_cpu.interrupt_count;
                 full_last_perf_us = now_us;
@@ -456,6 +462,10 @@ void app_main(void) {
                     if (q_head_now == q_tail_now) break;
                     rtype_i86_step(&full_cpu);
                 }
+                uint16_t q_head_after = rtype_m72_core_read16(&core, 0x42ed8u);
+                uint16_t q_tail_after = rtype_m72_core_read16(&core, 0x42edau);
+                if (q_head_after == q_tail_after) full_prof_qdrain_ok++;
+                else full_prof_qdrain_miss++;
                 int64_t full_render_begin_us = esp_timer_get_time();
                 rtype_m72_core_render_frame(&core, fb);
 #if RTYPE_S3_RENDER_AUDIT

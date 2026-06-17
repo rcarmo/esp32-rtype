@@ -35,6 +35,7 @@ CHECKS = {
     "aspect_display": re.compile(r"aspect-blit view=720x480\+40,0"),
     "perf": re.compile(r"S3 PERF"),
     "playfield": re.compile(r"S3 PERF.*root=0x0aa6"),
+    "qdrain": re.compile(r"S3 PERF.*qdrain=[1-9]\d*/0.*root=0x0aa6"),
 }
 
 
@@ -74,7 +75,7 @@ def main() -> int:
                     seen[name] = True
             required = ["maincpu_mapped", "fat_mounted", "graphics_loaded", "aspect_display", "perf"]
             if not args.no_playfield_required:
-                required.append("playfield")
+                required.extend(["playfield", "qdrain"]) 
             if all(seen[k] for k in required) and not failures:
                 break
     finally:
@@ -82,7 +83,7 @@ def main() -> int:
 
     required = ["maincpu_mapped", "fat_mounted", "graphics_loaded", "aspect_display", "perf"]
     if not args.no_playfield_required:
-        required.append("playfield")
+        required.extend(["playfield", "qdrain"]) 
     missing = [k for k in required if not seen[k]]
 
     print("S3_SMOKE_SUMMARY", " ".join(f"{k}={int(v)}" for k, v in seen.items()), flush=True)

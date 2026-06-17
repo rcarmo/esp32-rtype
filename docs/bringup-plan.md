@@ -135,6 +135,7 @@ Current S3 performance/fidelity baseline:
 
 - Render pacing default: `render_irq=4`.
 - The S3 render loop waits for the active M72 scene (`root=0x0aa6`) and gives the game a bounded queue-drain window before snapshotting. This avoids presenting transient mid-update frames where the game has cleared background tile attributes but not rebuilt them yet.
+- Normal `S3 PERF` lines include `qdrain=ok/miss`; smoke requires at least one active `root=0x0aa6` line with `qdrain=<nonzero>/0` so serial-only validation catches background-incomplete render regressions.
 - Typical active-playfield logs now show ~48-60 IRQ/s in lighter sections and lower values in dense sections, while preserving complete-frame background rendering.
 - Direct S3 framebuffer handoff plus triple source framebuffers removes the previous source snapshot copy; `present_us` is typically single-digit microseconds.
 - The S3 source framebuffer matches the host reference structure after queue drain (`vram0/vram1` populated, including background attribute lanes), and camera comparisons show foreground, sprites, and lower/background artwork.
@@ -244,5 +245,5 @@ make s3-fatfs-image
 - The S3 path is live and renders the active playfield, including backgrounds, but it is still a constrained ESP32-S3 port, not a full MAME implementation.
 - Audio, real input, and general M72 compatibility remain out of scope.
 - Do not reintroduce static/prebaked frames, coarse renderers, direct sprite-overlay shortcuts, or synthetic palette fallbacks.
-- Do not remove the queue-drain-before-render behavior: it is required for complete background frames on S3.
+- Do not remove the queue-drain-before-render behavior or the smoke `qdrain` check: they are required for complete background frames on S3.
 - Use MAME references for renderer changes; keep host harness and firmware renderer semantics aligned.
