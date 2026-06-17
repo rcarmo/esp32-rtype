@@ -88,6 +88,23 @@ static fb_audit_t audit_framebuffer(const uint16_t *fb) {
 
 #endif
 
+static void configure_runtime_logging(void) {
+    // Keep firmware independent of an attached serial/debug consumer by
+    // suppressing generic ESP-IDF chatter. Project tags needed by smoke tests
+    // and field diagnostics remain at INFO.
+    esp_log_level_set("*", ESP_LOG_WARN);
+    esp_log_level_set(TAG, ESP_LOG_INFO);
+    esp_log_level_set("rtype_rom", ESP_LOG_INFO);
+    esp_log_level_set("rtype_core", ESP_LOG_INFO);
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    esp_log_level_set("rtype_display_s3", ESP_LOG_INFO);
+#elif defined(RTYPE_BOARD_ESP32_2432S028)
+    esp_log_level_set("rtype_display_cyd", ESP_LOG_INFO);
+#elif defined(RTYPE_BOARD_M5STACK_TAB5_ESP32P4)
+    esp_log_level_set("rtype_display_tab5", ESP_LOG_INFO);
+#endif
+}
+
 static void log_system_info(void) {
     esp_chip_info_t chip = {0};
     esp_chip_info(&chip);
@@ -111,6 +128,7 @@ static void log_system_info(void) {
 }
 
 void app_main(void) {
+    configure_runtime_logging();
     log_system_info();
     rtype_rom_log_expected();
 
