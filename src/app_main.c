@@ -289,11 +289,22 @@ void app_main(void) {
         }
     }
     uint16_t *fb_next = rtype_video_alloc_framebuffer();
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+    uint16_t *fb_third = rtype_video_alloc_framebuffer();
+    if (fb_next != NULL && fb_third != NULL) {
+        ESP_LOGI(TAG, "triple framebuffer enabled for direct async display handoff");
+    } else if (fb_next != NULL) {
+        ESP_LOGI(TAG, "double framebuffer enabled for async display handoff");
+    } else {
+        ESP_LOGW(TAG, "single framebuffer only; display producer will throttle after present");
+    }
+#else
     if (fb_next != NULL) {
         ESP_LOGI(TAG, "double framebuffer enabled for async display handoff");
     } else {
         ESP_LOGW(TAG, "single framebuffer only; display producer will throttle after present");
     }
+#endif
 
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
     rtype_i86_cpu_t full_cpu;
@@ -470,13 +481,23 @@ void app_main(void) {
             ESP_LOGE(TAG, "present failed: %s", esp_err_to_name(err));
         }
         if (fb_next != NULL) {
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+            if (fb_third != NULL) {
+                uint16_t *tmp = fb;
+                fb = fb_next;
+                fb_next = fb_third;
+                fb_third = tmp;
+            } else {
+                uint16_t *tmp = fb;
+                fb = fb_next;
+                fb_next = tmp;
+            }
+            // S3 display has its own queue/task; keep the emulator core fed.
+            vTaskDelay(pdMS_TO_TICKS(1));
+#else
             uint16_t *tmp = fb;
             fb = fb_next;
             fb_next = tmp;
-#if defined(RTYPE_BOARD_ESP32_8048S043C)
-            // S3 display has its own snapshot queue/task; keep the emulator core fed.
-            vTaskDelay(pdMS_TO_TICKS(1));
-#else
             vTaskDelay(pdMS_TO_TICKS(33));
 #endif
         } else {
