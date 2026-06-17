@@ -7,10 +7,9 @@ managed_components/*
 !managed_components/espressif__esp_lcd_ili9341/**
 !managed_components/espressif__cmake_utilities/
 !managed_components/espressif__cmake_utilities/**
-roms/*.zip
-roms/*.bin
-roms/*.rom
-roms/extracted/
+roms/*
+!roms/.gitkeep
+!roms/README.md
 artifacts/
 artifacts/*.bin
 artifacts/*.png
