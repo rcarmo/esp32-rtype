@@ -1,0 +1,35 @@
+# Normalize text files for reproducible diffs across host OSes.
+* text=auto eol=lf
+
+# Source/config/docs are text.
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ini text eol=lf
+*.csv text eol=lf
+Makefile text eol=lf
+
+# Generated/media/binary artifacts.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.bin binary
+*.rom binary
+*.zip binary
+*.ppm binary
+*.elf binary
+*.map text eol=lf
+
+# Vendored ESP-IDF managed components are tracked intentionally when whitelisted
+# in .gitignore, but should not dominate GitHub language statistics.
+managed_components/** linguist-vendored
+components_tab5/m5stack_tab5/** linguist-vendored

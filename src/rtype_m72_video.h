@@ -10,6 +10,10 @@
 #define RTYPE_M72_VRAM_BYTES 0x4000u
 #define RTYPE_M72_PALETTE_COLORS 512u
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     const uint8_t *sprites;
     size_t sprites_size;
@@ -41,4 +45,8 @@ void rtype_m72_video_render_cyd_background_columns(const rtype_m72_video_t *vide
 void rtype_m72_video_render_cyd_composited_columns(const rtype_m72_video_t *video, uint16_t *dst,
                                                    unsigned phys_x, unsigned cols);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

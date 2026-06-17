@@ -19,6 +19,10 @@
 #define RTYPE_M72_SOUND_RAM_BASE 0xe0000u
 #define RTYPE_M72_RESET_VECTOR_BASE 0xffff0u
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     uint8_t *cpu_map;
     size_t cpu_map_size;
@@ -61,4 +65,8 @@ void rtype_m72_core_out16(rtype_m72_core_t *core, uint16_t port, uint16_t value)
 void rtype_m72_core_render_frame(rtype_m72_core_t *core, uint16_t *fb);
 uint32_t rtype_m72_core_count_nonzero(const rtype_m72_core_t *core, uint32_t begin, uint32_t end);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

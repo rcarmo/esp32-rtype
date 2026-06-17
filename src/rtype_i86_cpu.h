@@ -6,6 +6,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     RTYPE_I86_AX = 0,
     RTYPE_I86_CX = 1,
@@ -58,4 +62,8 @@ void rtype_i86_complete_frame_if_idle(rtype_i86_cpu_t *cpu);
 bool rtype_i86_step(rtype_i86_cpu_t *cpu);
 uint64_t rtype_i86_run(rtype_i86_cpu_t *cpu, uint64_t instruction_budget);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -9,6 +9,10 @@
 
 #define RTYPE_ROM_FILE_MAX 20
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     const char *name;
     size_t expected_size;
@@ -34,4 +38,8 @@ esp_err_t rtype_rom_load_m72_graphics(const char *path, rtype_m72_video_t *video
 void rtype_rom_log_expected(void);
 void rtype_rom_log_probe_result(const rtype_rom_set_info_t *info);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

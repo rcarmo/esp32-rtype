@@ -20,6 +20,10 @@
 // Source and destination pixels are RGB565 in native uint16_t memory order for
 // esp_lcd draw_bitmap. The CYD ILI9341 init uses MADCTL BGR but panel_config
 // requests LCD_RGB_ELEMENT_ORDER_RGB; no software RGB/BGR bit swap is applied.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 uint16_t rtype_blit_rgb565_identity(uint16_t rgb565);
 void rtype_blit_cyd_fill_border_strip(uint16_t *dst, unsigned dst_y, unsigned rows, uint16_t color);
 void rtype_blit_cyd_scale_strip_240x160(const uint16_t *src, uint16_t *dst, unsigned dst_y, unsigned rows);
@@ -32,4 +36,8 @@ void rtype_blit_cyd_rotate_scale_columns_320x213(const uint16_t *src, uint16_t *
 void rtype_blit_cyd_rotate_boot_pattern_columns_320x213(uint16_t *dst, unsigned phys_x,
                                                         unsigned cols, unsigned frame_no);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif
