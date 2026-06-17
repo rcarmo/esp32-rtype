@@ -22,7 +22,7 @@ Current S3 status:
 - host and firmware renderers use MAME-style M72 tile priority masks, sprite-list traversal, and palette RAM semantics
 - S3 snapshots complete game frames after the M72 update queue drains, avoiding mid-update frames with cleared background attributes
 - active playfield foreground, sprites, and background artwork are visible and can be verified with the exact comparison workflow
-- current S3 render cadence is `render_irq=4` with direct framebuffer handoff and triple source framebuffers
+- current S3 render cadence is `render_irq=3` with direct framebuffer handoff and triple source framebuffers
 
 Explicitly still out of scope:
 

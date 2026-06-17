@@ -133,10 +133,10 @@ Important S3 fidelity fixes already applied:
 
 Current S3 performance/fidelity baseline:
 
-- Render pacing default: `render_irq=4`.
+- Render pacing default: `render_irq=3`.
 - The S3 render loop waits for the active M72 scene (`root=0x0aa6`) and gives the game a bounded queue-drain window before snapshotting. This avoids presenting transient mid-update frames where the game has cleared background tile attributes but not rebuilt them yet.
 - Normal `S3 PERF` lines include `qdrain=ok/miss`; smoke requires at least one active `root=0x0aa6` line with `qdrain=<nonzero>/0` so serial-only validation catches background-incomplete render regressions.
-- Typical active-playfield logs now show ~48-60 IRQ/s in lighter sections and lower values in dense sections, while preserving complete-frame background rendering.
+- With `render_irq=3`, observed active logs showed `qdrain=N/0` with no misses over the sampled active window, render costs around the optimized row-cache band, and active IRQ rate around 40-47/s in dense sections and higher in lighter/non-active sections.
 - Direct S3 framebuffer handoff plus triple source framebuffers removes the previous source snapshot copy; `present_us` is typically single-digit microseconds.
 - The S3 source framebuffer matches the host reference structure after queue drain (`vram0/vram1` populated, including background attribute lanes), and camera comparisons show foreground, sprites, and lower/background artwork.
 - RGB panel color wiring has been verified separately with temporary red/green/blue bars; green displays correctly, so remaining visual differences in photos are not due to panel RGB order.
@@ -179,7 +179,8 @@ Recent exact matched comparison examples:
 - Background-restored baseline: `artifacts/compare/host-vs-s3-f071b-r0aa6.jpg`.
 - Direct framebuffer handoff: `artifacts/compare/host-vs-s3-f0759-r0aa6.jpg`.
 - Cached/unrolled row renderer: `artifacts/compare/host-vs-s3-f07df-r0aa6.jpg`.
-- Current `render_irq=4` test: `artifacts/compare/host-vs-s3-f07bf-r0aa6.jpg`.
+- Validated `render_irq=4` test: `artifacts/compare/host-vs-s3-f07bf-r0aa6.jpg`.
+- Current `render_irq=3` validation is serial/qdrain-based because no usable V4L2 camera is currently attached; do not treat arbitrary camera failures as renderer failures without checking the capture device.
 
 Older baseline example:
 
