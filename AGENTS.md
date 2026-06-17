@@ -33,19 +33,24 @@ make help
 make bootstrap
 ```
 
-Build host/reference tools and firmware:
+Build host/reference tools and supported firmware targets:
 
 ```bash
 make host-harness
 make build-s3
 make build-cyd
-make build-tab5
 ```
 
-Build all firmware targets:
+Build the current green firmware set:
 
 ```bash
 make build-all
+```
+
+Tab5 is a secondary profile with local BSP integration caveats; build it explicitly when working on that board:
+
+```bash
+make build-tab5
 ```
 
 Host-side ROM/render checks:
