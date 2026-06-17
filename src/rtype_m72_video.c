@@ -422,6 +422,9 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
                 if (cache_ok && px_begin == 0 && px_end == 8) {
                     uint16_t *d = dst + dst_x_base;
+                    bool row_opaque = (transmask == 0) ||
+                                      (decoded_tile_row_masks != NULL &&
+                                       (decoded_tile_row_masks[code * 8u + ry] & transmask) == 0);
 #define DRAW_CACHED_TILE_PEN(SHIFT_, IDX_) do { \
                         uint8_t pen_ = (uint8_t)((packed_row >> (SHIFT_)) & 0x0fu); \
                         if (!(transmask & (1u << pen_))) d[(IDX_)] = pal[pen_]; \
@@ -430,7 +433,7 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
                         uint8_t pen_ = (uint8_t)((packed_row >> (SHIFT_)) & 0x0fu); \
                         d[(IDX_)] = pal[pen_]; \
                     } while (0)
-                    if (transmask == 0) {
+                    if (row_opaque) {
                         if (!flipx) {
                             DRAW_CACHED_TILE_PEN_OPAQUE(28u, 0); DRAW_CACHED_TILE_PEN_OPAQUE(24u, 1);
                             DRAW_CACHED_TILE_PEN_OPAQUE(20u, 2); DRAW_CACHED_TILE_PEN_OPAQUE(16u, 3);
