@@ -1,4 +1,4 @@
-# rtype-tab5
+# esp32-rtype
 
 Display-first arcade emulator experiment for **Irem R-Type / M72**. The primary test target is now the **ESP32-S3 480×800 ESP32-8048S043C** board; **M5Stack Tab5 / ESP32-P4** is kept as a secondary profile.
 
