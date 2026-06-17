@@ -1,27 +1,29 @@
+# PlatformIO / ESP-IDF build output
 .pio/
 build/
 sdkconfig
 sdkconfig.old
+sdkconfig.*-rtype
+dependencies.lock
+
+# Tracked managed-component allowlist. Other component-manager downloads are generated.
 managed_components/*
 !managed_components/espressif__esp_lcd_ili9341/
 !managed_components/espressif__esp_lcd_ili9341/**
 !managed_components/espressif__cmake_utilities/
 !managed_components/espressif__cmake_utilities/**
+
+# Local ROM drop directory. Only placeholders are tracked.
 roms/*
 !roms/.gitkeep
 !roms/README.md
+
+# Generated project artifacts: packed ROMs, FAT images, camera captures, host frames.
 artifacts/
-artifacts/*.bin
-artifacts/*.png
-artifacts/*.ppm
+
+# Local/editor/cache noise
 .DS_Store
-artifacts/packed-rtype/
-artifacts/gfx-atlas/
-artifacts/*.zip
-artifacts/sequence-*/
-artifacts/screenshots/
-sdkconfig.*-rtype
-sdkconfig.esp32-*
-dependencies.lock
-artifacts/cyd-preview/
-artifacts/camera/
+__pycache__/
+*.py[cod]
+*~
+*.swp
