@@ -13,6 +13,8 @@ make build-s3
 make build-cyd
 ```
 
+If your Python environment differs from the default, pass `PYTHON=/path/to/python` to the Makefile.
+
 For S3 firmware changes, also run:
 
 ```bash

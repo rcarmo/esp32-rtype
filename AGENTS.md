@@ -33,6 +33,12 @@ make help
 make bootstrap
 ```
 
+The Makefile uses `PYTHON` for helper scripts. It defaults to `/workspace/.venvs/pio/bin/python` when present, otherwise `python3`; override it when needed:
+
+```bash
+make smoke-s3 PYTHON=/path/to/python
+```
+
 Build host/reference tools and supported firmware targets:
 
 ```bash

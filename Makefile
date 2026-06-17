@@ -13,13 +13,14 @@ HOST_RTYPE_HARNESS ?= $(HOST_BUILD_DIR)/rtype_host_harness
 HOST_RTYPE_PPM ?= artifacts/host-rtype-frame.ppm
 HOST_RTYPE_PNG ?= artifacts/host-rtype-frame.png
 HOST_RTYPE_INSTRUCTIONS ?= 300000000
+PYTHON ?= $(shell if [ -x /workspace/.venvs/pio/bin/python ]; then echo /workspace/.venvs/pio/bin/python; else command -v python3; fi)
 S3_MAINCPU_OFFSET := 0x410000
 S3_STORAGE_OFFSET := 0x510000
 S3_STORAGE_SIZE := 9437184
 S3_FATFS_ROOT := artifacts/s3-fatfs-root
 S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
-ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
+ESPTOOL ?= $(PYTHON) -m esptool
 
 .PHONY: help bootstrap check-tool guard-roms format-check inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean distclean
 
@@ -59,8 +60,8 @@ bootstrap:
 	@$(MAKE) --no-print-directory check-tool TOOL=convert
 	@$(MAKE) --no-print-directory check-tool TOOL=ffmpeg OPTIONAL=1
 	@$(MAKE) --no-print-directory check-tool TOOL=v4l2-ctl OPTIONAL=1
-	@test -x /workspace/.venvs/pio/bin/python || (echo "missing /workspace/.venvs/pio/bin/python" >&2; exit 1)
-	@/workspace/.venvs/pio/bin/python -c "import importlib.util, sys; missing=[m for m in ('serial',) if importlib.util.find_spec(m) is None]; print('Python modules OK' if not missing else 'missing Python modules in /workspace/.venvs/pio: '+', '.join(missing), file=sys.stderr); raise SystemExit(1 if missing else 0)"
+	@test -n "$(PYTHON)" || (echo "missing python3 or /workspace/.venvs/pio/bin/python" >&2; exit 1)
+	@$(PYTHON) -c "import importlib.util, sys; missing=[m for m in ('serial',) if importlib.util.find_spec(m) is None]; print('Python modules OK' if not missing else 'missing Python modules for $(PYTHON): '+', '.join(missing), file=sys.stderr); raise SystemExit(1 if missing else 0)"
 	@echo "Bootstrap checks passed."
 
 check-tool:
@@ -142,7 +143,7 @@ s3-storage-root: extract-rom
 	cp $(ROM_EXTRACTED)/*.bin $(S3_FATFS_ROOT)/rtype/
 
 s3-fatfs-image: s3-storage-root
-	/workspace/.venvs/pio/bin/python $(IDF_FATFS_GEN) --partition_size $(S3_STORAGE_SIZE) --output_file $(S3_FATFS_IMAGE) $(S3_FATFS_ROOT)
+	$(PYTHON) $(IDF_FATFS_GEN) --partition_size $(S3_STORAGE_SIZE) --output_file $(S3_FATFS_IMAGE) $(S3_FATFS_ROOT)
 
 flash-s3-data: pack-rom s3-fatfs-image
 	$(ESPTOOL) --chip esp32s3 --port $(SERIAL_PORT) --baud 460800 write-flash \
@@ -153,13 +154,13 @@ monitor:
 	$(PIO) device monitor -e $(PIO_ENV) --port $(SERIAL_PORT)
 
 smoke-s3:
-	/workspace/.venvs/pio/bin/python tools/smoke_s3.py --port $(SERIAL_PORT)
+	$(PYTHON) tools/smoke_s3.py --port $(SERIAL_PORT)
 
 capture-s3-playfield:
-	/workspace/.venvs/pio/bin/python tools/capture_s3_playfield.py --port $(SERIAL_PORT)
+	$(PYTHON) tools/capture_s3_playfield.py --port $(SERIAL_PORT)
 
 compare-s3-host:
-	/workspace/.venvs/pio/bin/python tools/compare_s3_host.py --port $(SERIAL_PORT)
+	$(PYTHON) tools/compare_s3_host.py --port $(SERIAL_PORT)
 
 clean:
 	rm -rf .pio build sdkconfig sdkconfig.old sdkconfig.*-rtype dependencies.lock roms/extracted \
