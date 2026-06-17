@@ -37,4 +37,5 @@ See also:
 
 - [`docs/bringup-plan.md`](docs/bringup-plan.md) — current S3 architecture, flashing, smoke/comparison workflow
 - [`docs/boards/`](docs/boards/index.md) — board-specific characteristics, limitations, and rendering techniques
+- [`docs/source-layout.md`](docs/source-layout.md) — tracked source vs generated/local files
 - [`docs/rom-layout.md`](docs/rom-layout.md) — ROM packing/layout notes
