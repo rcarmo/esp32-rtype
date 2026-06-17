@@ -31,7 +31,7 @@ Explicitly still out of scope:
 - menus/save states
 - general MAME compatibility
 
-This is **not Neo Geo**. The attached ROM set is MAME-style Irem R-Type, not an AES/MVS cartridge.
+This is **not Neo Geo**. The target ROM set is MAME-style Irem R-Type, not an AES/MVS cartridge.
 
 See also:
 
