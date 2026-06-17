@@ -109,6 +109,7 @@ typedef struct {
     size_t size;
     unsigned code_count;
     uint64_t *sprite_rows;
+    uint16_t *sprite_row_masks;
 } s3_sprite_decode_cache_t;
 
 static s3_tile_decode_cache_t s_s3_tile_caches[2];
@@ -169,12 +170,15 @@ static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size,
     return rows;
 }
 
-static const uint64_t *s3_get_sprite_rows(const rtype_m72_video_t *video, unsigned *code_count_out) {
+static const uint64_t *s3_get_sprite_rows(const rtype_m72_video_t *video, unsigned *code_count_out,
+                                          const uint16_t **row_masks_out) {
+    if (row_masks_out) *row_masks_out = NULL;
     if (code_count_out) *code_count_out = 0;
     if (video == NULL || video->sprites == NULL || video->sprites_size < 4u) return NULL;
     if (s_s3_sprite_cache.src == video->sprites && s_s3_sprite_cache.size == video->sprites_size &&
         s_s3_sprite_cache.sprite_rows != NULL) {
         if (code_count_out) *code_count_out = s_s3_sprite_cache.code_count;
+        if (row_masks_out) *row_masks_out = s_s3_sprite_cache.sprite_row_masks;
         return s_s3_sprite_cache.sprite_rows;
     }
     const unsigned quarter = (unsigned)(video->sprites_size / 4u);
@@ -182,10 +186,13 @@ static const uint64_t *s3_get_sprite_rows(const rtype_m72_video_t *video, unsign
     if (code_count == 0) return NULL;
     uint64_t *rows = (uint64_t *)rtype_m72_alloc_region((size_t)code_count * 16u * sizeof(uint64_t), "s3-sprite-rows");
     if (rows == NULL) return NULL;
+    uint16_t *masks = (uint16_t *)rtype_m72_alloc_region((size_t)code_count * 16u * sizeof(uint16_t), "s3-sprite-row-masks");
+    if (masks == NULL) return NULL;
     const unsigned plane_offsets[4] = {quarter * 3u, quarter * 2u, quarter, 0u};
     for (unsigned code = 0; code < code_count; code++) {
         for (unsigned y = 0; y < 16u; y++) {
             uint64_t packed = 0;
+            uint16_t mask = 0;
             for (unsigned x = 0; x < 16u; x++) {
                 unsigned byte_in_char = (x >= 8u) ? (16u + y) : y;
                 unsigned bit = 7u - (x & 7u);
@@ -197,12 +204,15 @@ static const uint64_t *s3_get_sprite_rows(const rtype_m72_video_t *video, unsign
                     pen |= (uint8_t)(((b >> bit) & 1u) << (3u - p));
                 }
                 packed = (packed << 4) | pen;
+                mask |= (uint16_t)(1u << pen);
             }
             rows[code * 16u + y] = packed;
+            masks[code * 16u + y] = mask;
         }
     }
     s_s3_sprite_cache = (s3_sprite_decode_cache_t){ .src = video->sprites, .size = video->sprites_size,
-                                                    .code_count = code_count, .sprite_rows = rows };
+                                                    .code_count = code_count, .sprite_rows = rows,
+                                                    .sprite_row_masks = masks };
     ESP_LOGI(TAG, "S3 decoded sprite row cache: %u codes %u bytes @%p", code_count,
              (unsigned)((size_t)code_count * 16u * sizeof(uint64_t)), (void *)rows);
     if (code_count_out) *code_count_out = code_count;
@@ -539,7 +549,8 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
     const unsigned plane3 = 0u;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
     unsigned decoded_sprite_codes = 0;
-    const uint64_t *decoded_sprite_rows = s3_get_sprite_rows(video, &decoded_sprite_codes);
+    const uint16_t *decoded_sprite_row_masks = NULL;
+    const uint64_t *decoded_sprite_rows = s3_get_sprite_rows(video, &decoded_sprite_codes, &decoded_sprite_row_masks);
 #endif
     uint16_t sprite_offsets[RTYPE_M72_SPRITERAM_BYTES / 8u];
     unsigned sprite_count = collect_mame_sprite_offsets(sprite_ram, sprite_offsets, sizeof(sprite_offsets) / sizeof(sprite_offsets[0]));
@@ -579,6 +590,8 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
                     uint8_t right0 = 0, right1 = 0, right2 = 0, right3 = 0;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
                     uint64_t packed_row = cache_ok ? decoded_sprite_rows[c * 16u + ry] : 0;
+                    if (cache_ok && decoded_sprite_row_masks != NULL &&
+                        (decoded_sprite_row_masks[c * 16u + ry] & 0xfffeu) == 0) continue;
                     if (!cache_ok && rom_ok) {
 #else
                     if (rom_ok) {
