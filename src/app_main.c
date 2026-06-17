@@ -315,7 +315,7 @@ void app_main(void) {
     const int64_t full_frame_period_us = 16667;
     bool full_main_loop_seen = false;
     bool full_frame_vector_ready = false;
-    const uint64_t full_render_irq_interval = 5u;
+    const uint64_t full_render_irq_interval = 4u;
     uint64_t full_last_presented_irq = 0;
     uint64_t full_render_due_irq = 0;
     bool full_render_due = false;

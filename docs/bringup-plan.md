@@ -133,10 +133,23 @@ Important S3 fidelity fixes already applied:
 
 Current S3 performance/fidelity baseline:
 
-- Render pacing default: `render_irq=5`.
-- Typical active-playfield logs show ~40-59 IRQ/s depending on scene cost.
-- The S3 source framebuffer contains the same dominant green terrain RGB565 values as the host reference during active `root=0x0aa6` playfield states.
+- Render pacing default: `render_irq=4`.
+- The S3 render loop waits for the active M72 scene (`root=0x0aa6`) and gives the game a bounded queue-drain window before snapshotting. This avoids presenting transient mid-update frames where the game has cleared background tile attributes but not rebuilt them yet.
+- Typical active-playfield logs now show ~48-60 IRQ/s in lighter sections and lower values in dense sections, while preserving complete-frame background rendering.
+- Direct S3 framebuffer handoff plus triple source framebuffers removes the previous source snapshot copy; `present_us` is typically single-digit microseconds.
+- The S3 source framebuffer matches the host reference structure after queue drain (`vram0/vram1` populated, including background attribute lanes), and camera comparisons show foreground, sprites, and lower/background artwork.
 - RGB panel color wiring has been verified separately with temporary red/green/blue bars; green displays correctly, so remaining visual differences in photos are not due to panel RGB order.
+
+Current S3 renderer optimizations that preserve fidelity:
+
+- MAME sprite-list traversal: wide-sprite continuation slots are skipped like upstream `m72_state::draw_sprites()` instead of being rendered independently.
+- Whole-sprite clipping before decode.
+- MAME tile layer draw order, including the initial layer-0 bitmap writes used while MAME prepares sprite priority.
+- S3 row caches for decoded tile and sprite graphics.
+- Cached tile-row transparency masks and row-level transparent-row skipping.
+- Unrolled cached tile-row drawing for unclipped rows.
+- Cached sprite-row transparency masks plus transparent-row skipping and unrolled cached sprite-row drawing.
+- Direct S3 display handoff with triple source framebuffers.
 
 ## Exact host-vs-S3 comparison workflow
 
@@ -154,12 +167,14 @@ This runs `tools/compare_s3_host.py`, which:
 4. runs the host harness to the exact same `frame/root` state using `--target-frame` and `--target-root`,
 5. generates a side-by-side image under `artifacts/compare/`.
 
-The most recent exact matched comparison used:
+Recent exact matched comparison examples:
 
-- S3: `frame=0x07c4`, `root=0x0aa6`, `scroll=(486,0)/(461,0)`.
-- Host: `frame_counter=0x07c4`, `root_state=0x0aa6`, `scroll=(486,0)/(461,0)`.
+- Background-restored baseline: `artifacts/compare/host-vs-s3-f071b-r0aa6.jpg`.
+- Direct framebuffer handoff: `artifacts/compare/host-vs-s3-f0759-r0aa6.jpg`.
+- Cached/unrolled row renderer: `artifacts/compare/host-vs-s3-f07df-r0aa6.jpg`.
+- Current `render_irq=4` test: `artifacts/compare/host-vs-s3-f07bf-r0aa6.jpg`.
 
-Generated artifact example:
+Older baseline example:
 
 ```text
 artifacts/compare/host-vs-s3-f07c4-r0aa6.jpg
@@ -214,7 +229,8 @@ make s3-fatfs-image
 
 ## Current caveats
 
-- The S3 path is live and renders the active playfield, but it is still a constrained ESP32-S3 port, not a full MAME implementation.
+- The S3 path is live and renders the active playfield, including backgrounds, but it is still a constrained ESP32-S3 port, not a full MAME implementation.
 - Audio, real input, and general M72 compatibility remain out of scope.
 - Do not reintroduce static/prebaked frames, coarse renderers, direct sprite-overlay shortcuts, or synthetic palette fallbacks.
+- Do not remove the queue-drain-before-render behavior: it is required for complete background frames on S3.
 - Use MAME references for renderer changes; keep host harness and firmware renderer semantics aligned.

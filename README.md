@@ -19,8 +19,10 @@ Current S3 status:
 - graphics ROMs load from `/spiflash/rtype`
 - M72 work/video/sprite/palette/sound RAM is mapped in sparse PSRAM-backed regions
 - display is proportional on the 800×480 RGB panel: `720×480+40,0`
-- host and firmware renderers use MAME-style M72 tile priority masks and palette RAM semantics
-- active playfield backgrounds are visible and can be verified with the exact comparison workflow
+- host and firmware renderers use MAME-style M72 tile priority masks, sprite-list traversal, and palette RAM semantics
+- S3 snapshots complete game frames after the M72 update queue drains, avoiding mid-update frames with cleared background attributes
+- active playfield foreground, sprites, and background artwork are visible and can be verified with the exact comparison workflow
+- current S3 render cadence is `render_irq=4` with direct framebuffer handoff and triple source framebuffers
 
 Explicitly still out of scope:
 
