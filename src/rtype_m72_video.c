@@ -615,6 +615,63 @@ static void draw_sprites(const rtype_m72_video_t *video, uint16_t *fb) {
                     if (dst_x_base + px_end > (int)RTYPE_GAME_W) px_end = (int)RTYPE_GAME_W - dst_x_base;
                     if (px_begin >= px_end) continue;
                     uint16_t *dst = fb + (size_t)dst_y * RTYPE_GAME_W;
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+                    if (cache_ok && px_begin == 0 && px_end == 16) {
+                        uint16_t *d = dst + dst_x_base;
+#define DRAW_CACHED_SPRITE_PEN(SHIFT_, IDX_) do { \
+                            uint8_t pen_ = (uint8_t)((packed_row >> (SHIFT_)) & 0x0fu); \
+                            if (pen_ != 0) d[(IDX_)] = pal[pen_]; \
+                        } while (0)
+#define DRAW_CACHED_SPRITE_PEN_OPAQUE(SHIFT_, IDX_) do { \
+                            uint8_t pen_ = (uint8_t)((packed_row >> (SHIFT_)) & 0x0fu); \
+                            d[(IDX_)] = pal[pen_]; \
+                        } while (0)
+                        const bool row_opaque = decoded_sprite_row_masks != NULL &&
+                                                (decoded_sprite_row_masks[c * 16u + ry] & 0x0001u) == 0;
+                        if (row_opaque) {
+                            if (!flipx) {
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(60u, 0); DRAW_CACHED_SPRITE_PEN_OPAQUE(56u, 1);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(52u, 2); DRAW_CACHED_SPRITE_PEN_OPAQUE(48u, 3);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(44u, 4); DRAW_CACHED_SPRITE_PEN_OPAQUE(40u, 5);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(36u, 6); DRAW_CACHED_SPRITE_PEN_OPAQUE(32u, 7);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(28u, 8); DRAW_CACHED_SPRITE_PEN_OPAQUE(24u, 9);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(20u, 10); DRAW_CACHED_SPRITE_PEN_OPAQUE(16u, 11);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(12u, 12); DRAW_CACHED_SPRITE_PEN_OPAQUE(8u, 13);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(4u, 14); DRAW_CACHED_SPRITE_PEN_OPAQUE(0u, 15);
+                            } else {
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(0u, 0); DRAW_CACHED_SPRITE_PEN_OPAQUE(4u, 1);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(8u, 2); DRAW_CACHED_SPRITE_PEN_OPAQUE(12u, 3);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(16u, 4); DRAW_CACHED_SPRITE_PEN_OPAQUE(20u, 5);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(24u, 6); DRAW_CACHED_SPRITE_PEN_OPAQUE(28u, 7);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(32u, 8); DRAW_CACHED_SPRITE_PEN_OPAQUE(36u, 9);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(40u, 10); DRAW_CACHED_SPRITE_PEN_OPAQUE(44u, 11);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(48u, 12); DRAW_CACHED_SPRITE_PEN_OPAQUE(52u, 13);
+                                DRAW_CACHED_SPRITE_PEN_OPAQUE(56u, 14); DRAW_CACHED_SPRITE_PEN_OPAQUE(60u, 15);
+                            }
+                        } else if (!flipx) {
+                            DRAW_CACHED_SPRITE_PEN(60u, 0); DRAW_CACHED_SPRITE_PEN(56u, 1);
+                            DRAW_CACHED_SPRITE_PEN(52u, 2); DRAW_CACHED_SPRITE_PEN(48u, 3);
+                            DRAW_CACHED_SPRITE_PEN(44u, 4); DRAW_CACHED_SPRITE_PEN(40u, 5);
+                            DRAW_CACHED_SPRITE_PEN(36u, 6); DRAW_CACHED_SPRITE_PEN(32u, 7);
+                            DRAW_CACHED_SPRITE_PEN(28u, 8); DRAW_CACHED_SPRITE_PEN(24u, 9);
+                            DRAW_CACHED_SPRITE_PEN(20u, 10); DRAW_CACHED_SPRITE_PEN(16u, 11);
+                            DRAW_CACHED_SPRITE_PEN(12u, 12); DRAW_CACHED_SPRITE_PEN(8u, 13);
+                            DRAW_CACHED_SPRITE_PEN(4u, 14); DRAW_CACHED_SPRITE_PEN(0u, 15);
+                        } else {
+                            DRAW_CACHED_SPRITE_PEN(0u, 0); DRAW_CACHED_SPRITE_PEN(4u, 1);
+                            DRAW_CACHED_SPRITE_PEN(8u, 2); DRAW_CACHED_SPRITE_PEN(12u, 3);
+                            DRAW_CACHED_SPRITE_PEN(16u, 4); DRAW_CACHED_SPRITE_PEN(20u, 5);
+                            DRAW_CACHED_SPRITE_PEN(24u, 6); DRAW_CACHED_SPRITE_PEN(28u, 7);
+                            DRAW_CACHED_SPRITE_PEN(32u, 8); DRAW_CACHED_SPRITE_PEN(36u, 9);
+                            DRAW_CACHED_SPRITE_PEN(40u, 10); DRAW_CACHED_SPRITE_PEN(44u, 11);
+                            DRAW_CACHED_SPRITE_PEN(48u, 12); DRAW_CACHED_SPRITE_PEN(52u, 13);
+                            DRAW_CACHED_SPRITE_PEN(56u, 14); DRAW_CACHED_SPRITE_PEN(60u, 15);
+                        }
+#undef DRAW_CACHED_SPRITE_PEN_OPAQUE
+#undef DRAW_CACHED_SPRITE_PEN
+                        continue;
+                    }
+#endif
                     for (int px_i = px_begin; px_i < px_end; px_i++) {
                         unsigned px = (unsigned)px_i;
                         unsigned dst_x = (unsigned)(dst_x_base + px_i);
