@@ -332,6 +332,16 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
 }
 
 
+#if defined(RTYPE_BOARD_ESP32_8048S043C)
+static inline uint16_t packed_tile_row_pen_mask(uint32_t packed_row) {
+    uint16_t mask = 0;
+    for (unsigned i = 0; i < 8u; i++) {
+        mask |= (uint16_t)(1u << ((packed_row >> (i * 4u)) & 0x0fu));
+    }
+    return mask;
+}
+#endif
+
 static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb, const uint8_t *region,
                                    size_t region_size, const uint8_t *vram, unsigned palette_base,
                                    uint16_t sx_scroll, uint16_t sy_scroll,
@@ -385,6 +395,7 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
                 uint8_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
                 uint32_t packed_row = cache_ok ? decoded_tile_rows[code * 8u + ry] : 0;
+                if (cache_ok && (packed_tile_row_pen_mask(packed_row) & (uint16_t)~transmask) == 0) continue;
                 if (!cache_ok && rom_ok) {
 #else
                 if (rom_ok) {
