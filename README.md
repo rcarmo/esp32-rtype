@@ -36,4 +36,5 @@ This is **not Neo Geo**. The attached ROM set is MAME-style Irem R-Type, not an 
 See also:
 
 - [`docs/bringup-plan.md`](docs/bringup-plan.md) — current S3 architecture, flashing, smoke/comparison workflow
+- [`docs/boards/`](docs/boards/index.md) — board-specific characteristics, limitations, and rendering techniques
 - [`docs/rom-layout.md`](docs/rom-layout.md) — ROM packing/layout notes
