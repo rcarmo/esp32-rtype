@@ -2,7 +2,7 @@
 
 ## Scope
 
-The attached ROM set is Irem R-Type, not Neo Geo. First run targets only a visible display path on ESP32-S3 480×800 first, with M5Stack Tab5 / ESP32-P4 as secondary.
+The local ROM set expected by this project is Irem R-Type, not Neo Geo. The primary visible-display target is ESP32-S3 480×800, with M5Stack Tab5 / ESP32-P4 retained as a secondary profile.
 
 Explicitly deferred:
 
@@ -180,8 +180,8 @@ Recent exact matched comparison examples:
 - Background-restored baseline: `artifacts/compare/host-vs-s3-f071b-r0aa6.jpg`.
 - Direct framebuffer handoff: `artifacts/compare/host-vs-s3-f0759-r0aa6.jpg`.
 - Cached/unrolled row renderer: `artifacts/compare/host-vs-s3-f07df-r0aa6.jpg`.
-- Validated `render_irq=4` test: `artifacts/compare/host-vs-s3-f07bf-r0aa6.jpg`.
-- Current `render_irq=3` validation is serial/qdrain-based because no usable V4L2 camera is currently attached; do not treat arbitrary camera failures as renderer failures without checking the capture device.
+- Last camera-validated pre-`render_irq=3` comparison: `artifacts/compare/host-vs-s3-f07bf-r0aa6.jpg`.
+- Current `render_irq=3` validation is serial/qdrain-based because no usable V4L2 camera is currently attached; do not treat camera capture failures as renderer failures without checking the capture device.
 
 Older baseline example:
 

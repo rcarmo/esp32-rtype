@@ -105,7 +105,7 @@ The hot loop then performs only indexed loads, pointer arithmetic, and packed RG
 
 ## Live strip/column CYD path
 
-- The old embedded real-frame validation path has been removed from the source tree.
+- The previous checked-in static-frame validation arrays have been removed from the source tree.
 - CYD should render live M72 state through the strip/column helpers rather than shipping static frame arrays.
 - `rtype_m72_video_render_cyd_columns()` and related helpers sample the current tile/sprite/palette state into SPI-friendly strips.
 - This keeps CYD aligned with the repository policy: no prebaked/static game frames as final output.

@@ -35,6 +35,7 @@ This is **not Neo Geo**. The target ROM set is MAME-style Irem R-Type, not an AE
 
 See also:
 
+- [`docs/README.md`](docs/README.md) — documentation index
 - [`docs/bringup-plan.md`](docs/bringup-plan.md) — current S3 architecture, flashing, smoke/comparison workflow
 - [`docs/boards/`](docs/boards/index.md) — board-specific characteristics, limitations, and rendering techniques
 - [`docs/source-layout.md`](docs/source-layout.md) — tracked source vs generated/local files
