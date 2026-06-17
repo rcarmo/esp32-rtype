@@ -101,6 +101,7 @@ typedef struct {
     size_t size;
     unsigned code_count;
     uint32_t *tile_rows;
+    uint16_t *tile_row_masks;
 } s3_tile_decode_cache_t;
 
 typedef struct {
@@ -113,12 +114,15 @@ typedef struct {
 static s3_tile_decode_cache_t s_s3_tile_caches[2];
 static s3_sprite_decode_cache_t s_s3_sprite_cache;
 
-static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size, unsigned *code_count_out) {
+static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size,
+                                        unsigned *code_count_out, const uint16_t **row_masks_out) {
+    if (row_masks_out) *row_masks_out = NULL;
     if (code_count_out) *code_count_out = 0;
     if (region == NULL || size < 4u) return NULL;
     for (unsigned i = 0; i < 2u; i++) {
         if (s_s3_tile_caches[i].src == region && s_s3_tile_caches[i].size == size && s_s3_tile_caches[i].tile_rows != NULL) {
             if (code_count_out) *code_count_out = s_s3_tile_caches[i].code_count;
+            if (row_masks_out) *row_masks_out = s_s3_tile_caches[i].tile_row_masks;
             return s_s3_tile_caches[i].tile_rows;
         }
     }
@@ -131,6 +135,8 @@ static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size, unsi
     if (code_count == 0) return NULL;
     uint32_t *rows = (uint32_t *)rtype_m72_alloc_region((size_t)code_count * 8u * sizeof(uint32_t), "s3-tile-rows");
     if (rows == NULL) return NULL;
+    uint16_t *masks = (uint16_t *)rtype_m72_alloc_region((size_t)code_count * 8u * sizeof(uint16_t), "s3-tile-row-masks");
+    if (masks == NULL) return NULL;
     const unsigned plane_offsets[4] = {quarter * 3u, quarter * 2u, quarter, 0u};
     for (unsigned code = 0; code < code_count; code++) {
         for (unsigned y = 0; y < 8u; y++) {
@@ -141,6 +147,7 @@ static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size, unsi
                 b[p] = (off < size) ? region[off] : 0;
             }
             uint32_t packed = 0;
+            uint16_t mask = 0;
             for (unsigned x = 0; x < 8u; x++) {
                 unsigned bit = 7u - x;
                 uint8_t pen = (uint8_t)((((b[0] >> bit) & 1u) << 3) |
@@ -148,11 +155,14 @@ static const uint32_t *s3_get_tile_rows(const uint8_t *region, size_t size, unsi
                                         (((b[2] >> bit) & 1u) << 1) |
                                         ((b[3] >> bit) & 1u));
                 packed = (packed << 4) | pen;
+                mask |= (uint16_t)(1u << pen);
             }
             rows[row] = packed;
+            masks[row] = mask;
         }
     }
-    s_s3_tile_caches[slot] = (s3_tile_decode_cache_t){ .src = region, .size = size, .code_count = code_count, .tile_rows = rows };
+    s_s3_tile_caches[slot] = (s3_tile_decode_cache_t){ .src = region, .size = size, .code_count = code_count,
+                                                       .tile_rows = rows, .tile_row_masks = masks };
     ESP_LOGI(TAG, "S3 decoded tile row cache: %u codes %u bytes @%p", code_count,
              (unsigned)((size_t)code_count * 8u * sizeof(uint32_t)), (void *)rows);
     if (code_count_out) *code_count_out = code_count;
@@ -243,7 +253,7 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
     const unsigned plane3 = 0u;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
     unsigned decoded_tile_codes = 0;
-    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
+    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes, NULL);
 #endif
     int16_t base_x_by_tx[64];
     uint8_t visible_tx[64];
@@ -332,16 +342,6 @@ static void draw_tile_layer(const rtype_m72_video_t *video, uint16_t *fb, const 
 }
 
 
-#if defined(RTYPE_BOARD_ESP32_8048S043C)
-static inline uint16_t packed_tile_row_pen_mask(uint32_t packed_row) {
-    uint16_t mask = 0;
-    for (unsigned i = 0; i < 8u; i++) {
-        mask |= (uint16_t)(1u << ((packed_row >> (i * 4u)) & 0x0fu));
-    }
-    return mask;
-}
-#endif
-
 static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb, const uint8_t *region,
                                    size_t region_size, const uint8_t *vram, unsigned palette_base,
                                    uint16_t sx_scroll, uint16_t sy_scroll,
@@ -354,7 +354,8 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
     const unsigned plane3 = 0u;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
     unsigned decoded_tile_codes = 0;
-    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes);
+    const uint16_t *decoded_tile_row_masks = NULL;
+    const uint32_t *decoded_tile_rows = s3_get_tile_rows(region, region_size, &decoded_tile_codes, &decoded_tile_row_masks);
 #endif
     int16_t base_x_by_tx[64];
     uint8_t visible_tx[64];
@@ -395,7 +396,8 @@ static void draw_tile_layer_masked(const rtype_m72_video_t *video, uint16_t *fb,
                 uint8_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
 #if defined(RTYPE_BOARD_ESP32_8048S043C)
                 uint32_t packed_row = cache_ok ? decoded_tile_rows[code * 8u + ry] : 0;
-                if (cache_ok && (packed_tile_row_pen_mask(packed_row) & (uint16_t)~transmask) == 0) continue;
+                if (cache_ok && decoded_tile_row_masks != NULL &&
+                    (decoded_tile_row_masks[code * 8u + ry] & (uint16_t)~transmask) == 0) continue;
                 if (!cache_ok && rom_ok) {
 #else
                 if (rom_ok) {
