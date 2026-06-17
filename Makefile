@@ -21,7 +21,7 @@ S3_FATFS_IMAGE := artifacts/s3-rtype-fatfs-wl-9m.bin
 IDF_FATFS_GEN ?= /home/agent/.platformio/packages/framework-espidf/components/fatfs/wl_fatfsgen.py
 ESPTOOL ?= /workspace/.venvs/pio/bin/python -m esptool
 
-.PHONY: help bootstrap check-tool guard-roms format-check inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean
+.PHONY: help bootstrap check-tool guard-roms format-check inspect-rom extract-rom pack-rom gfx-atlas host-harness host-run check build build-all build-s3 build-cyd build-tab5 flash flash-s3 deploy-s3 s3-storage-root s3-fatfs-image flash-s3-data monitor smoke-s3 capture-s3-playfield compare-s3-host clean distclean
 
 help:
 	@echo "R-Type display-first targets"
@@ -48,6 +48,8 @@ help:
 	@echo "  make smoke-s3                 - reset S3 and verify live ROM/display/playfield logs"
 	@echo "  make capture-s3-playfield     - capture camera frames when S3 reaches active playfield state"
 	@echo "  make compare-s3-host          - capture S3 and render exact host side-by-side comparison"
+	@echo "  make clean                    - remove generated build/pack/cache artifacts"
+	@echo "  make distclean                - clean plus remove all ignored artifacts/ outputs"
 
 bootstrap:
 	@echo "Checking required tools..."
@@ -160,4 +162,10 @@ compare-s3-host:
 	/workspace/.venvs/pio/bin/python tools/compare_s3_host.py --port $(SERIAL_PORT)
 
 clean:
-	rm -rf .pio build sdkconfig sdkconfig.old roms/extracted artifacts/packed-rtype artifacts/gfx-atlas artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png $(S3_FATFS_ROOT) $(S3_FATFS_IMAGE)
+	rm -rf .pio build sdkconfig sdkconfig.old sdkconfig.*-rtype dependencies.lock roms/extracted \
+		tools/__pycache__ artifacts/packed-rtype artifacts/gfx-atlas \
+		artifacts/host-rtype-frame.ppm artifacts/host-rtype-frame.png \
+		$(S3_FATFS_ROOT) $(S3_FATFS_IMAGE)
+
+distclean: clean
+	rm -rf artifacts
